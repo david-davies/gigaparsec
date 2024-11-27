@@ -1,5 +1,9 @@
 {-# LANGUAGE Trustworthy #-}
 {-# LANGUAGE TemplateHaskell, TypeOperators, CPP, UnicodeSyntax, ExistentialQuantification #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# OPTIONS_GHC -Wno-unused-do-bind #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-|
 Module      : Text.Gigaparsec.Token.Patterns
 Description : Template Haskell generators to help with patterns
@@ -18,18 +22,23 @@ module Text.Gigaparsec.Token.Patterns (
   ) where
 
 import Text.Gigaparsec (Parsec)
-import Text.Gigaparsec.Token.Lexer (Lexer, lexeme, sym, Symbol, symbol, Lexeme)
+import Text.Gigaparsec.Token.Lexer (Lexer (space), lexeme, sym, Symbol, symbol, Lexeme (names, integer, natural, charLiteral), Space, Names, CanHoldSigned, CanHoldUnsigned)
+
+import Text.Gigaparsec.Internal.Patterns (sanitiseBndrStars, sanitiseTypeStars)
 
 import Data.String (IsString(fromString))
-import Language.Haskell.TH.Syntax (Q, Dec (..), Exp (VarE), Name (Name), OccName (OccName), reifyType, Type (ForallT), Quasi (qRecover), reifyInstances, reify, Quote (newName), nameBase, Body (..), Code)
-#if __GLASGOW_HASKELL__ >= 902
-import Language.Haskell.TH (Type(MulArrowT), Pat (VarP))
-#endif
-import Language.Haskell.TH (Type (..))
+import Language.Haskell.TH.Syntax (Q, Dec (..), Exp (VarE), Name (Name), OccName (OccName), reifyType, Type (ForallT), Quasi (qRecover), reifyInstances, reify, Quote (newName), nameBase, Body (..), Code, unTypeCode, isInstance, runIO, mkName, Inline (Inline), Phases (AllPhases))
+
+import Language.Haskell.TH (Type(MulArrowT), Pat (VarP), sigD, pprint, RuleMatch (FunLike))
+
+import Language.Haskell.TH (Type (..), funD, clause, normalB, varE, Ppr (ppr), pragInlD)
 import Control.Arrow (Arrow(first))
-import Control.Monad (when, guard)
+import Control.Monad (when, guard, unless)
 import Control.Applicative (Alternative)
 import Data.Kind (Constraint)
+import Debug.Trace (trace)
+import Text.Gigaparsec.Internal.Token.Numeric (IntegerParsers)
+import Text.Gigaparsec.Internal.Token.Text (TextParsers)
 
 {-|
 When given a quoted reference to a 'Text.Gigaparsec.Token.Lexer.Lexer', for example
@@ -46,15 +55,99 @@ overloadedStrings qlexer = [d|
       fromString = sym (lexeme $qlexer) -- TODO: one day, $qlexer.lexeme.sym
   |]
 
-guardM :: (Alternative m, Monad m) => m Bool -> m a -> m a
-guardM cond a = do
-  b <- cond
-  guard b
-  a
 
+{-|
+Generate the given lexer combinators from a given lexer.
+-}
+lexerCombinators
+  :: Code Q Lexer -- The lexer
+  -> [Name] -- The combinators to generate
+  -> Q [Dec]
+lexerCombinators lexer = fmap concat . traverse mkCombinator
+  where
+    mkCombinator :: Name -> Q [Dec]
+    mkCombinator x = do
+      tp <- reifyType x
+      (prefix, dom, _, cod) <-
+        fail (notFunctionTypeMsg x tp) `qRecover` fnTpDomain tp
+      let newTp = prefix cod
+      (`unless` fail (notLexerFieldMsg x dom)) =<< isInstance ''LexerField [dom]
+      mkDec x newTp
+
+    mkDec
+      :: Name -- The name of the combinator
+      -> Type -- The return type of the combinator to be formed
+      -> Q [Dec]
+    mkDec cName tp = do
+      x <- newName (nameBase cName)
+      sequence
+        [ pragInlD x Inline FunLike AllPhases
+        , sigD x (pure tp)
+        , funD x [clause [] (normalB [| project $(varE cName) $(unTypeCode lexer) |]) []]
+        ]
+
+    notLexerFieldMsg :: Name -> Type -> String
+    notLexerFieldMsg x tp = concat [
+        "The function ", pprint x, " is not a valid lexer combinator.",
+        "\n Cannot construct a combinator from its type `", pprint tp, "`."
+      ]
+
+    notFunctionTypeMsg :: Name -> Type -> String
+    notFunctionTypeMsg x tp = concat ["Type of `", show x,"` is not a function type: ", show tp]
+
+{-|
+Denote the type of an arrow; it is either normal or linear.
+-}
+type ArrowTp :: *
+data ArrowTp = StdArrow | LinearArrow
+
+{-|
+Get the domain of a function type.
+Keep any prefixed constraints and type variable quantifiers as a prefixing function.
+-}
+fnTpDomain
+      :: Type
+      ->  Q (Type -> Type, Type, ArrowTp, Type)
+          -- The head of the type, includes any preceding constraints 
+          -- and foralls. this is a function which prefixes the given type with the constraints/foralls
+          -- The domain and codomain of the type
+fnTpDomain x = do
+  (a, (b,c,d)) <- fnTpDomain' x
+  (a,,c,) <$> sanitiseTypeStars b <*> sanitiseTypeStars d
+  where
+  fnTpDomain' (ForallT bnds ctx tp) = do
+    bnds' <- sanitiseBndrStars bnds
+    first (ForallT bnds' ctx .) <$> fnTpDomain' tp
+  fnTpDomain' (ForallVisT bnds tp) = do
+    bnds' <- sanitiseBndrStars bnds
+    first (ForallVisT bnds' .) <$> fnTpDomain' tp
+  fnTpDomain' (AppT (AppT ArrowT a) b) =
+    return (id, (a, StdArrow, b))
+
+  fnTpDomain' (AppT (AppT MulArrowT a) b) =
+    return (id, (a, LinearArrow, b))
+
+  fnTpDomain' tp = fail
+    ("Type of given function is not a function type: " ++ show tp)
+
+---------------------------------------------------------------------------------------------------
+-- Lexer Field
+
+{-|
+@a@ is a `LexerField` when it is the type of a component or subcomponent of the `Lexer` type.
+This includes things like `Lexeme` and `Symbol`.
+-}
 type LexerField :: * -> Constraint
 class LexerField a where
   project :: (a -> b) -> (Lexer -> b)
+
+instance LexerField Lexer where
+  {-# INLINE project #-}
+  project :: (Lexer -> b) -> (Lexer -> b)
+  project = id
+
+---------------------------------------------------------------------------------------------------
+-- Lexemes
 
 instance LexerField Lexeme where
   {-# INLINE project #-}
@@ -66,90 +159,42 @@ instance LexerField Symbol where
   project :: (Symbol -> b) -> (Lexer -> b)
   project f = f . symbol . lexeme
 
+instance LexerField Names where
+  {-# INLINE project #-}
+  project :: (Names -> b) -> (Lexer -> b)
+  project f = f . names . lexeme
 
-data LexerComponent = ∀ a b . LexerField a => LC (a -> b)
+instance LexerField (IntegerParsers CanHoldSigned) where
+  {-# INLINE project #-}
+  project :: (IntegerParsers CanHoldSigned -> b) -> (Lexer -> b)
+  project f = f . integer . lexeme
 
-foo :: LexerComponent
-foo = LC (symbol)
+instance LexerField (IntegerParsers CanHoldUnsigned) where
+  {-# INLINE project #-}
+  project :: (IntegerParsers CanHoldUnsigned -> b) -> (Lexer -> b)
+  project f = f . natural . lexeme
 
-comb2 :: Lexer -> Name -> LexerComponent -> Q [Dec]
-comb2 l n (LC f) = do
-  x <- newName (nameBase n)
-  let y = project f l
-  -- [d| $(pure $ VarP x) = y |]
-  return [ValD (VarP x) (NormalB [|y|]) []]
-  -- [d| $x = project f l |]
+instance LexerField (TextParsers Char) where
+  {-# INLINE project #-}
+  project :: (TextParsers Char -> b) -> (Lexer -> b)
+  project f = f . charLiteral . lexeme
 
-{-|
-Generate the given lexer combinators from a given lexer.
--}
-lexerCombinators 
-  :: Lexer
-  -> [Name]
-  -> Q [Dec]
-lexerCombinators lexer ns = traverse mkCombinator ns
-  where
-    nmToFunc :: Name -> Exp
-    nmToFunc = VarE
-    mkCombinator :: Name -> Q Dec
-    mkCombinator x = do
-      tm <- reify x
-      tp <- reifyType x
-      (prefix, dom, arrTp, cod) <- (fail $ concat ["Type of `", show x,"` is not a function type: ", show tp]) 
-          `qRecover` 
-        (fnTpDomain tp)
-      reifyInstances ''LexerField []
-      _
 
-    getLexerProjection :: Type -> Q Exp
-    getLexerProjection tp = do
-      is <- reifyInstances ''LexerField [tp]
-      case is of
-        -- Is it fine to have more than one instance for `tp`?
-        i: _ -> _
-        [] -> fail $ concat ["No instances"]
+---------------------------------------------------------------------------------------------------
+-- Space
 
-    projectFromLexer :: Type -> Q Exp
-    projectFromLexer tp = do
-      -- t <- [t| Lexer |]
-      -- guardM (t == tp)
-      _
-    -- mkSymbolCombinator
-    -- Use nameBase
-    -- getNameStem :: Name -> String
-    -- getNameStem (Name (OccName x) _) = x
-    -- getNameStem n = error $ concat [
-    --     "lexerCombinators: ",
-    --     "The given name `", show n,
-    --     "` is not a qualified import of a lexer function"
-    --   ]
+instance LexerField Space where
+  {-# INLINE project #-}
+  project :: (Space -> b) -> (Lexer -> b)
+  project f = f . space
 
-{-|
-Denote the type of an arrow; it is either normal or linear.
--}
-data ArrowTp = StdArrow | LinearArrow
+type IsLexer :: * -> Constraint
+class IsLexer l where
+  -- We never need this function, but it is good to have it as 
+  -- it forces any instance to show how to construct a lexer
+  toLexer :: l -> Lexer
 
-{-|
-Get the domain of a function type.
-Keep any prefixed constraints and type variable quantifiers as a prefixing function.
--}
-fnTpDomain 
-      :: Type 
-      ->  Q (Type -> Type, Type, ArrowTp, Type) 
-          -- The head of the type, includes any preceding constraints 
-          -- and foralls. this is a function which prefixes the given type with the constraints/foralls
-          -- The domain and codomain of the type
-fnTpDomain = ((\(a, (b,c,d)) -> (a,b,c,d)) <$>) . fnTpDomain' 
-  where
-  fnTpDomain' (ForallT bnds ctx tp) =
-    first (ForallT bnds ctx .) <$> fnTpDomain' tp
-  fnTpDomain' (ForallVisT bnds tp) = 
-    first (ForallVisT bnds .) <$> fnTpDomain' tp
-  fnTpDomain' (AppT (AppT ArrowT a) b) = 
-    return (id, (a, StdArrow, b))
-#if __GLASGOW_HASKELL__ >= 902
-  fnTpDomain' (AppT (AppT MulArrowT a) b) = 
-    return (id, (a, LinearArrow, b))
-#endif
-  fnTpDomain' tp = fail 
-    ("Type of given function is not a function type: " ++ show tp)
+instance IsLexer Lexer where
+  {-# INLINE toLexer #-}
+  toLexer :: Lexer -> Lexer
+  toLexer = id
