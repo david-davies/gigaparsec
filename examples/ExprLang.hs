@@ -1,10 +1,10 @@
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs             #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-missing-deriving-strategies,
                 -Wno-orphans,
-                -Wmissing-kind-signatures
-#-}
+                -Wmissing-kind-signatures #-}
+
 {-|
 A small lang containing expressions and assignment.
 One statement per newline, except within parens, in which newlines are not significant.
@@ -16,7 +16,7 @@ Each assignment must be on a newline; if an expression is written over multiple 
 An example program would be,
 
 > x = 1 + 2
-> y = (1 + 
+> y = (1 +
   2 + 3)
 > z = (
     x +
@@ -30,24 +30,26 @@ https://dl.acm.org/doi/10.1145/3471874.3472984
 -}
 module ExprLang where
 
-import           ExprLang.Parser (program, expr)
 import ExprLang.AST
 import ExprLang.Lexer (fully)
+import ExprLang.Parser (expr, program)
 
-import           Text.Gigaparsec (Parsec, Result (..), parseFromFile, parse)
-import System.IO.Error (userError)
 import Control.Exception (throwIO)
+import System.IO.Error (userError)
+import Text.Gigaparsec (Parsec, Result (..), parse, parseFromFile)
 
 
 parseFile :: FilePath -> IO Program
 parseFile f = do
-  x <- parseFromFile @String program f
-  case x of
-    Success p -> return p
-    Failure e -> throwIO (userError e)
+    x <- parseFromFile @String program f
+    case x of
+        Success p -> return p
+        Failure e -> throwIO (userError e)
+
 
 parseFileShow :: FilePath -> IO ()
 parseFileShow x = print =<< parseFile x
+
 
 parseFilePretty :: FilePath -> IO ()
 parseFilePretty x = putStrLn . pretty =<< parseFile x
@@ -56,19 +58,24 @@ parseFilePretty x = putStrLn . pretty =<< parseFile x
 parseString :: Parsec a -> String -> Result String a
 parseString p = parse (fully p)
 
-parsePretty :: Pretty a => Parsec a -> String -> String
+
+parsePretty :: (Pretty a) => Parsec a -> String -> String
 parsePretty p x = case parseString p x of
-  Success y -> pretty y
-  Failure e -> "Error: " ++ e
+    Success y -> pretty y
+    Failure e -> "Error: " ++ e
+
 
 parseProg :: String -> Result String Program
 parseProg = parseString program
 
+
 parseExpr :: String -> Result String Expr
 parseExpr = parseString expr
 
+
 parsePrettyExpr :: String -> IO ()
 parsePrettyExpr = putStrLn . parsePretty expr
+
 
 parsePrettyProg :: String -> IO ()
 parsePrettyProg = putStrLn . parsePretty program
