@@ -4,6 +4,8 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE FlexibleInstances #-}
+
+{-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable, TemplateHaskell, TypeFamilies #-}
 {-|
 Module      : Text.Gigaparsec.Token.Patterns
 Description : Template Haskell generators to help with patterns
@@ -20,17 +22,20 @@ module Text.Gigaparsec.Token.Patterns (
   overloadedStrings,
   lexerCombinators,
   lexerCombinatorsWithNames,
+  lexerUnsignedParsers,
   ) where
 
 import Text.Gigaparsec (Parsec)
 import Text.Gigaparsec.Token.Lexer (Lexer (space), lexeme, sym, Symbol, symbol, Lexeme (..), Space, Names, CanHoldSigned, CanHoldUnsigned, TextParsers (..))
 
-import Text.Gigaparsec.Internal.Patterns (sanitiseBndrStars, sanitiseTypeStars)
+import Text.Gigaparsec.Internal.Patterns (sanitiseBndrStars, sanitiseTypeStars, removeUnusedTVars)
 
 import Data.String (IsString(fromString))
 import Language.Haskell.TH.Syntax (Q, Dec (..), Exp (VarE), Name (Name), OccName (OccName), reifyType, Type (ForallT), Quasi (qRecover), reifyInstances, reify, Quote (newName), nameBase, Body (..), Code, unTypeCode, isInstance, runIO, mkName, Inline (Inline), Phases (AllPhases), getDoc, DocLoc (DeclDoc), addModFinalizer, putDoc)
 
 import Language.Haskell.TH (Type(MulArrowT), Pat (VarP), sigD, pprint, RuleMatch (FunLike))
+
+import Data.Functor.Foldable.TH (makeBaseFunctor)
 
 import Language.Haskell.TH (Type (..), funD, clause, normalB, varE, Ppr (ppr), pragInlD)
 import Control.Arrow (Arrow(first))
@@ -42,6 +47,7 @@ import Text.Gigaparsec.Internal.Token.Numeric (IntegerParsers)
 import Text.Gigaparsec.Internal.Token.Text (TextParsers)
 import Data.Maybe (fromMaybe)
 import Text.Gigaparsec.Token.Lexer qualified as Lexer
+import Data.Functor.Foldable (cata, Corecursive (embed))
 
 {-|
 When given a quoted reference to a 'Text.Gigaparsec.Token.Lexer.Lexer', for example
@@ -109,27 +115,18 @@ lexerCombinatorWithName lexer old nm = mkCombinator
         fail (notFunctionTypeMsg old tp) `qRecover` fnTpDomain tp
       let newTp = prefix cod
       b <- isInstance ''LexerField [dom]
-      if b 
-        then mkDecNonSpecialised newTp
-        else specialisedCombinators dom newTp
+      if b
+        then mkDec newTp
+        else catchErrors dom newTp
 
-    -- Generate lexer combinators for TextParsers, as these are not unique per type,
-    -- we need to manually derive these (can't rely on the LexerField class).
-    specialisedCombinators :: Type -> Type -> Q [Dec]
-    specialisedCombinators dom newTp
-      -- Could wrap these in a `newtype SpecialisedField (a -> b) -> (Lexer -> b)`
-      -- but seems like over-engineering
-      --  | old == 'Lexer.stringLiteral = go [|| (. stringLiteral . lexeme) ||]
-      --  | old == 'Lexer.rawStringLiteral = go [|| (. rawStringLiteral . lexeme) ||]
-      --  | old == 'Lexer.multiStringLiteral = go [|| (. multiStringLiteral . lexeme) ||]
-      --  | old == 'Lexer.rawMultiStringLiteral = go [|| (. rawMultiStringLiteral . lexeme) ||]
+    -- Preventative Errors: catch the cases someone tries to define one of the String or Integer parsers
+    -- they should do these manually or with the bespoke generators!
+    catchErrors :: Type -> Type -> Q [Dec]
+    catchErrors dom newTp
       | old == 'Lexer.ascii = failStringParser old
       | old == 'Lexer.unicode = failStringParser old
       | old == 'Lexer.latin1 = failStringParser old
       | otherwise = fail (notLexerFieldMsg old dom)
-      where
-        go :: Code Q (LexerProj a b) -> Q [Dec]
-        go = mkDecSpecialised newTp 
 
     -- Message to give to the user when they give a TextParser field, as there is no way to disambiguate
     -- exactly *which* TextParser they want.
@@ -137,7 +134,7 @@ lexerCombinatorWithName lexer old nm = mkCombinator
     -- at that point, it would be no more work on the user's end than were they to write a manual definition.
     failStringParser :: Name -> Q a
     failStringParser nm = fail $ concat [
-        "Cannot derive a lexer combinator for `", pprint nm, 
+        "Cannot derive a lexer combinator for `", pprint nm,
         "`, as there are many possible ", pprint ''TextParsers, " to define it in terms of, including:",
         pprint 'stringLiteral, ", ",
         pprint 'rawStringLiteral, ", ",
@@ -146,30 +143,13 @@ lexerCombinatorWithName lexer old nm = mkCombinator
         "\n You will need to manually define this combinator, as you are then able to pick which TextParser it should use."
       ]
 
-    -- When the `LexerField` class applies to the desired combinator,
-    -- we can simply use the `project` function from that class.
-    mkDecNonSpecialised
-      :: Type -- The return type of the combinator to be formed
-      -> Q [Dec]
-    mkDecNonSpecialised tp = mkDecWith tp [| project |]
-    
-    -- When using a specialised field (e.g. a TextParser), then the (quoted) projection must be given.
-    -- Prefer this quoted code to be *typed* so that it is easier to catch mistakes
-    -- when defining them in `specialisedCombinators`.
-    mkDecSpecialised
-      :: Type -- The return type of the combinator to be formed
-      -> Code Q (LexerProj a b) -- the quoted projection function
-      -> Q [Dec]
-    mkDecSpecialised tp field = 
-      mkDecWith tp (unTypeCode field)
-
-    -- This actually makes the new function definition, using the supplied projection function and new name.
+    -- This actually makes the new function definition with the new name.
+    -- The type of `old` at this point is assumed to be in `LexerField`, so that we may define the function in terms of `project`.
     -- This declaration also provides a function signature and an INLINE pragma.
-    mkDecWith
+    mkDec
       :: Type -- The return type of the combinator to be formed
-      -> Q Exp -- The projection function
       -> Q [Dec]
-    mkDecWith tp proj = do
+    mkDec tp = do
       newX <- newName nm
       oldDocs <- getDoc (DeclDoc old)
       let newDocs = fromMaybe "" oldDocs
@@ -177,7 +157,7 @@ lexerCombinatorWithName lexer old nm = mkCombinator
       sequence
         [ pragInlD newX Inline FunLike AllPhases
         , sigD newX (pure tp)
-        , funD newX [clause [] (normalB [| $proj $(varE old) $lexer |]) []]
+        , funD newX [clause [] (normalB [| project $(varE old) $lexer |]) []]
         ]
 
     -- If the quoted name is not a recognised lexer field, then we should tell the user as much.
@@ -198,17 +178,37 @@ lexerCombinatorWithName lexer old nm = mkCombinator
     notFunctionTypeMsg x tp = concat ["Constant `", show x,"` does not have a function type: ", show tp]
 
 
--- lexerUnsignedParsers 
---   :: Q Exp -- Quoted Lexer
---   -> String -- prefix for unsigned parsers
---   -> Q [Dec]
--- lexerUnsignedParsers = 
+lexerUnsignedParsers
+  :: Q Exp -- Quoted Lexer
+  -> String -- prefix for unsigned parsers
+  -> Q [Dec]
+lexerUnsignedParsers lexer prfx = do
+  let x = 'Lexer.natural
+  let old = 'Lexer.decimal
+  tp <- reifyType old
+  (prefix, dom, _, cod) <-
+        fail "naw" `qRecover` fnTpDomain tp
+  let newTp = prefix cod
+  newX <- newName (prfx ++ nameBase old)
+  oldDocs <- getDoc (DeclDoc old)
+  let newDocs = fromMaybe "" oldDocs
+  addModFinalizer $ putDoc (DeclDoc newX) newDocs
+  sequence
+    [ pragInlD newX Inline FunLike AllPhases
+    , sigD newX (pure newTp)
+    , funD newX [clause [] (normalB [| project ($(varE old) . natural) $lexer |]) []]
+    ]
+
+---------------------------------------------------------------------------------------------------
+-- Util functions
 
 {-|
 Denote the type of an arrow; it is either normal or linear.
 -}
 type ArrowTp :: *
 data ArrowTp = StdArrow | LinearArrow
+
+
 
 {-|
 Get the domain of a function type.
@@ -221,8 +221,8 @@ fnTpDomain
           -- and foralls. this is a function which prefixes the given type with the constraints/foralls
           -- The domain and codomain of the type
 fnTpDomain x = do
-  (a, (b,c,d)) <- fnTpDomain' x
-  (a,,c,) <$> sanitiseTypeStars b <*> sanitiseTypeStars d
+  (a, (b,c,d)) <- fnTpDomain' =<< sanitiseTypeStars x
+  return (removeUnusedTVars . a,b,c, d)
   where
   fnTpDomain' (ForallT bnds ctx tp) = do
     bnds' <- sanitiseBndrStars bnds
@@ -245,10 +245,22 @@ fnTpDomain x = do
 {-|
 @a@ is a `LexerField` when it is the type of a component or subcomponent of the `Lexer` type.
 This includes things like `Lexeme` and `Symbol`.
+
+Avoid writing instances for:
+- IntegerParsers
+- TextParsers String
+
+As this leads to ambiguous projections if users try to generate combinators for, e.g., 'Lexer.decimal.
+There are two possible instances here, one for `integer`, the other for `natural`, and there is no way to disambiguate here.
+By avoiding writing these instances, we can give the user a more informative error message should they try this.
 -}
 type LexerField :: * -> Constraint
 class LexerField a where
   project :: (a -> b) -> (Lexer -> b)
+
+type LexerProj :: * -> * -> *
+type LexerProj a b = (a -> b) -> (Lexer -> b)
+
 
 instance LexerField Lexer where
   {-# INLINE project #-}
@@ -273,23 +285,10 @@ instance LexerField Names where
   project :: (Names -> b) -> (Lexer -> b)
   project f = f . names . lexeme
 
-instance LexerField (IntegerParsers CanHoldSigned) where
-  {-# INLINE project #-}
-  project :: (IntegerParsers CanHoldSigned -> b) -> (Lexer -> b)
-  project f = f . integer . lexeme
-
-instance LexerField (IntegerParsers CanHoldUnsigned) where
-  {-# INLINE project #-}
-  project :: (IntegerParsers CanHoldUnsigned -> b) -> (Lexer -> b)
-  project f = f . natural . lexeme
-
 instance LexerField (TextParsers Char) where
   {-# INLINE project #-}
   project :: (TextParsers Char -> b) -> (Lexer -> b)
   project f = f . charLiteral . lexeme
-
-
-type LexerProj a b = (a -> b) -> (Lexer -> b)
 
 
 ---------------------------------------------------------------------------------------------------
