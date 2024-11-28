@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
+{-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable, TemplateHaskell, TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-missing-deriving-strategies,
                 -Wno-orphans,
                 -Wmissing-kind-signatures #-}
@@ -14,6 +15,7 @@ ExprLang programs consist of a series of assignments and a final return statemen
 Each assignment must be on a newline; if an expression is written over multiple lines, it must be within parentheses.
 
 An example program would be,
+
 
 > x = 1 + 2
 > y = (1 +
@@ -34,6 +36,7 @@ import ExprLang.AST
 import ExprLang.Lexer (fully)
 import ExprLang.Parser (expr, program)
 
+import Data.Functor.Foldable.TH (makeBaseFunctor)
 import Control.Exception (throwIO)
 import System.IO.Error (userError)
 import Text.Gigaparsec (Parsec, Result (..), parse, parseFromFile)
@@ -79,3 +82,4 @@ parsePrettyExpr = putStrLn . parsePretty expr
 
 parsePrettyProg :: String -> IO ()
 parsePrettyProg = putStrLn . parsePretty program
+
