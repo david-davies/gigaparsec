@@ -98,6 +98,7 @@ library
                       Text.Gigaparsec.Expr.Chain,
                       Text.Gigaparsec.Expr.Infix,
                       Text.Gigaparsec.Expr.Subtype,
+                      Text.Gigaparsec.Parser,
                       Text.Gigaparsec.Patterns,
                       Text.Gigaparsec.Position,
                       Text.Gigaparsec.State,
@@ -131,7 +132,8 @@ library
                       selective        >= 0.6   && < 0.8,
                       pretty-terminal  >= 0.1.0 && < 0.2,
                       template-haskell >= 2.16  && < 3,
-                      rt               >= 0.1   && < 0.2
+                      rt               >= 0.1   && < 0.2,
+                      transformers     >= 0.5.6 && < 0.7
 
     -- Modules included in this library but not exported.
     -- other-modules:

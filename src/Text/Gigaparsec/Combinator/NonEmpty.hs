@@ -1,4 +1,6 @@
-{-# LANGUAGE Safe #-}
+{-# LANGUAGE Trustworthy #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 {-|
 Module      : Text.Gigaparsec.Combinator.NonEmpty
 Description : This module contains variants of combinators that return non-empty lists of results, modifying the result type to 'NonEmpty'.
@@ -13,14 +15,19 @@ These allow for stronger guarantees of parsed results to be baked into their typ
 -}
 module Text.Gigaparsec.Combinator.NonEmpty (some, someTill, sepBy1, sepEndBy1, endBy1) where
 
+
+import Text.Gigaparsec.Parser 
 import Text.Gigaparsec (Parsec, notFollowedBy)
 import Text.Gigaparsec.Combinator qualified as Combinator (manyTill, sepEndBy1)
 
 import Control.Applicative (liftA2, many)
 import Data.List.NonEmpty as NonEmpty (NonEmpty((:|)), fromList)
 
+
+
+
 infixl 4 <:|>
-(<:|>) :: Parsec a -> Parsec [a] -> Parsec (NonEmpty a)
+(<:|>) :: Parser p => p a -> p [a] -> p (NonEmpty a)
 (<:|>) = liftA2 (:|)
 
 {-
@@ -41,8 +48,9 @@ Requires at least one @p@ to have been parsed.
 
 @since 0.3.0.0
 -}
-some  :: Parsec a            -- ^ the parser @p@ to execute multiple times
-      -> Parsec (NonEmpty a) -- ^ a parser that parses @p@ until it fails, returning a non-empty list of the successful results.
+some  :: Parser p 
+      => p a            -- ^ the parser @p@ to execute multiple times
+      -> p (NonEmpty a) -- ^ a parser that parses @p@ until it fails, returning a non-empty list of the successful results.
 some p = p <:|> many p
 
 {-|
