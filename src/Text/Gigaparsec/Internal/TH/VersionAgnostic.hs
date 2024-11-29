@@ -76,9 +76,7 @@ import Language.Haskell.TH.Syntax qualified as TH hiding (TyVarBndr(..), Specifi
 import Language.Haskell.TH.Syntax qualified as THAll
 import GHC.Generics (Generic)
 import Data.Kind (Constraint)
-import Data.Bifunctor (Bifunctor(bimap))
-import Control.Monad (join)
--- import Data.Functor.Foldable 
+import Data.Bitraversable (bisequence)
 
 
 ---------------------------------------------------------------------------------------------------
@@ -199,7 +197,7 @@ class Functor (Base t) => Corecursive t where
   embed :: Base t t -> t
 
 zygo :: Recursive t => (Base t b -> b) -> (Base t (b, a) -> a) -> t -> a
-zygo f g = snd . cata (liftA2 (,) (f . fmap fst) g)
+zygo f g = snd . cata (bisequence (f . fmap fst, g))
 
 -------------------------------------------------------------------------------
 -- Base Functor Recursive/Corecursive instances
