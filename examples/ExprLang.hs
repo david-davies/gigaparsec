@@ -36,7 +36,6 @@ import ExprLang.AST
 import ExprLang.Lexer (fully)
 import ExprLang.Parser (expr, program)
 
-import Data.Functor.Foldable.TH (makeBaseFunctor)
 import Control.Exception (throwIO)
 import System.IO.Error (userError)
 import Text.Gigaparsec (Parsec, Result (..), parse, parseFromFile)

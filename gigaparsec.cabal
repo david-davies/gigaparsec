@@ -133,8 +133,7 @@ library
                       selective        >= 0.6   && < 0.8,
                       pretty-terminal  >= 0.1.0 && < 0.2,
                       template-haskell >= 2.16  && < 3,
-                      rt               >= 0.1   && < 0.2,
-                      recursion-schemes >= 5.2.2.2 && < 6,
+                      rt               >= 0.1   && < 0.2
 
     -- Modules included in this library but not exported.
     -- other-modules:
@@ -219,7 +218,6 @@ benchmark perf-test
     hs-source-dirs:  benchmarks
     build-depends:
         gigaparsec,
-        --containers >= 0.6 && < 0.7,
         gauge >= 0.1 && < 0.3,
         deepseq >= 1.4 && < 1.6
 
@@ -234,8 +232,7 @@ library examples
 
     build-depends:      
         gigaparsec,
-        containers >= 0.6 && < 0.7,
-        recursion-schemes >= 5.2.2.2 && < 6,
+        containers >= 0.6 && < 0.7
     
     exposed-modules:
         ExprLang,

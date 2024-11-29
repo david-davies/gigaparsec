@@ -229,7 +229,7 @@ getLexerCombinatorType old checkType = do
       ]
 
 
-
+-- | Names of the 
 integerParsers :: [Name]
 integerParsers = [
     'Lexer.decimal
@@ -270,26 +270,6 @@ intParsers64Bit = [
   , 'Lexer.binary64
   ]
 
--- integerParsersFixedWidth :: [Name]
--- integerParsersFixedWidth = [
---     'Lexer.decimal8
---   , 'Lexer.octal8
---   , 'Lexer.hexadecimal8
---   , 'Lexer.binary8
---   , 'Lexer.decimal16
---   , 'Lexer.hexadecimal16
---   , 'Lexer.octal16
---   , 'Lexer.binary16
---   , 'Lexer.decimal32
---   , 'Lexer.hexadecimal32
---   , 'Lexer.octal32
---   , 'Lexer.binary32
---   , 'Lexer.decimal64
---   , 'Lexer.hexadecimal64
---   , 'Lexer.octal64
---   , 'Lexer.binary64
---   ]
-
 lexerUnsignedParsers
   :: Q Exp -- Quoted Lexer
   -> String -- prefix for unsigned parsers
@@ -299,14 +279,6 @@ lexerUnsignedParsers lexer prfx =
       newTp <- getLexerCombinatorType p False
       mkLexerCombinatorDecWithProj lexer (prfx ++ nameBase p) p newTp [|natural|] True
     )
-  -- let x = 'Lexer.natural
-  -- let old = 'Lexer.decimal
-  -- tp <- reifyType old
-  -- (prefix, dom, _, cod) <-
-  --       fail "naw" `qRecover` fnTpDomain tp
-  -- let newTp = prefix cod
-  -- mkLexerCombinatorDec lexer (prfx ++ nameBase old) old newTp
-
 {-| Supply which bitwidths desired, and what their return types should be.
 
 -}

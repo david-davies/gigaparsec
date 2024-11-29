@@ -7,6 +7,8 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# OPTIONS_GHC -Wno-missing-kind-signatures #-}
 {-|
 Mostly some utils for dealing with TH in a version-agnostic way.
 -}
@@ -73,7 +75,10 @@ import Language.Haskell.TH.Syntax hiding (TyVarBndr(..), Specificity)
 import Language.Haskell.TH.Syntax qualified as TH hiding (TyVarBndr(..), Specificity)
 import Language.Haskell.TH.Syntax qualified as THAll
 import GHC.Generics (Generic)
-import Data.Functor.Foldable 
+import Data.Kind (Constraint)
+import Data.Bifunctor (Bifunctor(bimap))
+import Control.Monad (join)
+-- import Data.Functor.Foldable 
 
 
 ---------------------------------------------------------------------------------------------------
@@ -169,8 +174,32 @@ pattern ParensTF a <- ParensTF_ a
 pattern VarTF :: Name -> TypeF k
 pattern VarTF nm = AtomicF_ (VarT nm)
 
+-------------------------------------------------------------------------------
+-- Recursion Schemes Stuff
+{-
+To avoid adding a dependency on `recursion-schemes`, we re-implement some of
+the core features from this library.
+The originals can be found at:
+https://hackage.haskell.org/package/recursion-schemes
+-}
 
+type Base :: * -> * -> *
+type family Base t :: * -> *
 
+type Recursive :: * -> Constraint
+class Functor (Base t) => Recursive t where
+  project :: t -> Base t t
+  cata :: (Base t a -> a) -> t -> a
+  cata f = c 
+    where 
+    c = f . fmap c . project
+
+type Corecursive :: * -> Constraint
+class Functor (Base t) => Corecursive t where
+  embed :: Base t t -> t
+
+zygo :: Recursive t => (Base t b -> b) -> (Base t (b, a) -> a) -> t -> a
+zygo f g = snd . cata (liftA2 (,) (f . fmap fst) g)
 
 -------------------------------------------------------------------------------
 -- Base Functor Recursive/Corecursive instances
@@ -192,6 +221,7 @@ cataType alg = cata alg . THType
 
 zygoType :: (TypeF b -> b) -> (TypeF (b, a) -> a) -> Type -> a
 zygoType α β = zygo α β . THType
+
 
 instance Recursive THType where
   project :: THType -> Base THType THType
