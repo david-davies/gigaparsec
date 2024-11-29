@@ -1,20 +1,16 @@
-{-# LANGUAGE Trustworthy #-}
+{-# LANGUAGE Safe #-}
 {-# LANGUAGE TemplateHaskell, CPP, PatternSynonyms, LambdaCase #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveFoldable #-}
 {-# LANGUAGE DeriveTraversable, PatternSynonyms #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# OPTIONS_GHC -Wno-missing-kind-signatures #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-|
-Mostly some utils for dealing with TH.
-
-Should import TH from this module, as it defines useful version-friendly wrappers for data types.
-
+Mostly some utils for dealing with TH in a version-agnostic way.
 -}
-module Text.Gigaparsec.Internal.TH (
+module Text.Gigaparsec.Internal.TH.VersionAgnostic (
   -- * `TH.Type` Smart Constructors
   mkVarT,
   mkConT,
@@ -84,6 +80,7 @@ import Data.Functor.Foldable
 -- TyVarBndr Base Functor
 
 -- use this defn so that TypeF doesn't need to have two recursion params
+type TyVarBndrF :: * -> * -> *
 type TyVarBndrF flag k = Either (Name, flag) (Name, flag, k)
 
 {-# COMPLETE PlainTVF, KindedTVF #-}
@@ -258,6 +255,7 @@ versions of template haskell.
 /Note:/ In TemplateHaskell < 2.17, the flag parameter is ignored.
 -}
 #if MIN_VERSION_template_haskell(2,17,0)
+type TyVarBndr :: * -> *
 type TyVarBndr flag = THAll.TyVarBndr flag
 #else
 type TyVarBndr flag = TH.TyVarBndr 
@@ -267,6 +265,7 @@ type TyVarBndr flag = TH.TyVarBndr
 
 __Note:__ In TemplateHaskell < 2.17, this is unit.
 -}
+type Specificity :: *
 #if MIN_VERSION_template_haskell(2,17,0)
 type Specificity = THAll.Specificity
 #else

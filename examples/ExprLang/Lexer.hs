@@ -36,7 +36,9 @@ import Data.Char qualified as Char (GeneralCategory (Space))
 import Data.Int (Int64)
 import Data.Set (Set)
 import Text.Gigaparsec (Parsec, (<|>))
-import Text.Gigaparsec.Token.Patterns (lexerCombinators, lexerCombinatorsWithNames, overloadedStrings, lexerUnsignedParsers)
+import Text.Gigaparsec.Token.Patterns (lexerCombinators, lexerCombinatorsWithNames, overloadedStrings, lexerUnsignedParsers, lexerUnsignedFixedWidthParsers)
+import Data.Word (Word8)
+import Text.Gigaparsec.Internal.Token.BitBounds (Bits(B8))
 
 -- | The reserved keywords of the language
 keywords :: Set String
@@ -90,6 +92,7 @@ lexer =
       , Desc.whitespaceIsContextDependent = True
       }
 
+
 {-| Generate the lexer combinators -}
 $( lexerCombinators
     [|lexer|]
@@ -110,6 +113,7 @@ $( lexerUnsignedParsers [| lexer |] "u")
 -- Generate the OverloadedStrings for the lexer.
 $(overloadedStrings [|lexer|])
 
+$( lexerUnsignedFixedWidthParsers [| lexer |] "u" [(B8, [t|Word8|])])
 
 {- | Parses a single \'integer\' token.
 This may be written in decimal, hexadecimal, or binary form.
