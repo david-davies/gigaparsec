@@ -117,6 +117,7 @@ library
                       Text.Gigaparsec.Internal.Errors.ErrorItem,
                       Text.Gigaparsec.Internal.Errors.ParseError,
                       Text.Gigaparsec.Internal.Require,
+                      Text.Gigaparsec.Internal.TH.DecUtils,
                       Text.Gigaparsec.Internal.TH.TypeUtils,
                       Text.Gigaparsec.Internal.TH.VersionAgnostic,
                       Text.Gigaparsec.Internal.Token.BitBounds,
@@ -125,6 +126,8 @@ library
                       Text.Gigaparsec.Internal.Token.Lexer,
                       Text.Gigaparsec.Internal.Token.Names,
                       Text.Gigaparsec.Internal.Token.Numeric,
+                      Text.Gigaparsec.Internal.Token.Patterns.IntegerParsers,
+                      Text.Gigaparsec.Internal.Token.Patterns.LexerCombinators,
                       Text.Gigaparsec.Internal.Token.Symbol,
                       Text.Gigaparsec.Internal.Token.Text,
 
@@ -238,4 +241,5 @@ library examples
         ExprLang,
         ExprLang.Parser,
         ExprLang.Lexer,
+        ExprLang.Lexer.IntConfig,
         ExprLang.AST

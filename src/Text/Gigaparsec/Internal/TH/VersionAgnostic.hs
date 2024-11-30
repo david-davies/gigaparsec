@@ -1,4 +1,4 @@
-{-# LANGUAGE Safe #-}
+{-# LANGUAGE Trustworthy #-}
 {-# LANGUAGE TemplateHaskell, CPP, PatternSynonyms, LambdaCase #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DeriveFunctor #-}
