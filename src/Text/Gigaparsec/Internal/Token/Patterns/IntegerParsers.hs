@@ -1,5 +1,7 @@
 {-# LANGUAGE Trustworthy #-}
 
+{-# OPTIONS_HADDOCK hide #-}
+
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE ExistentialQuantification #-}
@@ -95,6 +97,14 @@ intParsers64Bit =
   ]
     `zip` intLitBaseList
 
+{-|
+The base of a numeric literal.
+
+Used in `IntegerParserConfig` to specify which parsers for which bases should be generated.
+
+@since 0.4.0.0
+
+-}
 type IntLitBase :: *
 data IntLitBase
   = Binary
@@ -103,10 +113,19 @@ data IntLitBase
   | Hexadecimal
   deriving stock (Show, Eq, Ord)
 
+{-|
+The bases (Binary, Octal, ...) of Int literals to be supported.
+
+'IntLitBases' is an instance of `IsList`, so you may use @-XOverloadedLists@ to refer to an 'IntLitBases'.
+
+@since 0.4.0.0
+
+-}
+-- TODO: This should just be a `Set IntLitBase`, and `AllBases` is either a constant or a pattern synonym.
 type IntLitBases :: *
-data IntLitBases
-  = AllBases
-  | IntLitBases (Set IntLitBase)
+data IntLitBases = 
+    AllBases -- ^ All bases (defined in `IntLitBase`) should be supported.
+  | IntLitBases (Set IntLitBase) -- ^ Only the bases in the given set should be supported.
 
 instance IsList IntLitBases where
   type Item IntLitBases = IntLitBase
@@ -114,41 +133,90 @@ instance IsList IntLitBases where
   toList AllBases = intLitBaseList
   toList (IntLitBases xs) = Set.toList xs
 
+{-| Determines if the combinators are for 'Signed' or 'Unsigned' int literals.
+
+@since 0.4.0.0
+
+-}
 type SignedOrUnsigned :: *
-data SignedOrUnsigned
-  = Signed
-  | Unsigned
+data SignedOrUnsigned = 
+    {-| The int literal is signed, so can be negative.
+    
+    @since 0.4.0.0
+    
+    -}
+    Signed    -- ^ 
+  | {-|  The literal is unsigned, so is always non-negative.
+    
+    @since 0.4.0.0
+    
+    -}
+    Unsigned
 
 isSigned :: SignedOrUnsigned -> Bool
 isSigned Signed = True
 isSigned Unsigned = False
 
+
+{-|
+This type describes how to generate numeric parsers with `generateIntegerParsers`.
+This includes configuration for which bases and bitwidths to support, and whether to generate
+parsers that can handle multiple bases. 
+
+See the 'emptyIntegerParserConfig' smart constructor to define a 'IntegerParserConfig'.
+
+@since 0.4.0.0
+
+-}
 type IntegerParserConfig :: *
 data IntegerParserConfig = IntegerParserConfig
-  { prefix :: String
-  -- ^
-  --     The string to prepend to each generated parser's name (except for the `collatedParser`, if specified).
+  { {-|
+    The string to prepend to each generated parser's name (except for the `collatedParser`, if specified).
+    
+    @since 0.4.0.0
+
+    -}
+    prefix :: String
+    {-| The fixed bit-widths (8-bit, 16-bit, etc/) for which to generate parsers.
+
+    @since 0.4.0.0
+
+    -}
   , widths :: Map Bits (Q Type)
-  -- ^
-  --     The fixed bit-widths (8-bit, 16-bit, etc/) for which to generate parsers.
+    {-|
+    The numeric bases (binary, octal, etc) for which to generate parsers.
+
+    @since 0.4.0.0
+
+    -}
   , bases :: IntLitBases
-  -- ^
-  --     The numeric bases (binary, octal, etc) for which to generate parsers.
+    {-|
+    When 'True', generate the unbounded integer parsers (e.g. `Text.Gigaparsec.Token.Lexer.decimal`) for each base specified in `bases`.
+    
+    @since 0.4.0.0
+
+    -}
   , includeUnbounded :: Bool
-  -- ^
-  --     When 'True', generate the unbounded integer parsers for each base specified in `bases`.
+    {-|
+    Generate a generic integer parser with the given name,
+    at each width (including unbounded) specified by `widths`, that
+    is able to parse each base specified in `bases`.
+  
+    * If 'Nothing', do not generate such a parser.
+    * If @'Just' ""@, then the default name will be @"natural"@  or @"integer"@ when `signedOrUnsigned`
+      is `Unsigned` or `Signed`, respectively.
+
+    @since 0.4.0.0
+
+    -}
   , collatedParser :: Maybe String
-  -- ^
-  --     Generate a generic integer parser with the given name,
-  --     at each width (including unbounded) specified by `widths`, that
-  --     is able to parse each base specified in `bases`.
-  --
-  --     * If 'Nothing', do not generate such a parser.
-  --     * If @'Just' ""@, then the default name will be @"natural"@  or @"integer"@ when `signedOrUnsigned`
-  --       is `Unsigned` or `Signed`, respectively.
+    {-|
+    Whether or not the parsers to generate are for 'Signed' or 'Unsigned' integers.
+
+    @since 0.4.0.0
+    
+    -}
   , signedOrUnsigned :: SignedOrUnsigned
-  -- ^
-  --     Whether or not the parsers to generate are for 'Signed' or 'Unsigned' integers.
   }
 
 filterByBase :: IntLitBases -> [(a, IntLitBase)] -> [a]
@@ -158,6 +226,7 @@ filterByBase (IntLitBases bs) = map fst . filter ((`Set.member` bs) . snd)
 filterByWidth :: Bits -> [(Bits, a)] -> [a]
 filterByWidth b = map snd . filter ((== b) . fst)
 
+-- | Monoidal when; if false, then return `mempty`
 mwhen :: (Monoid m) => Bool -> m -> m
 mwhen True x = x
 mwhen False _ = mempty
@@ -166,7 +235,61 @@ groupByBits :: [(Bits, Name)] -> [(Bits, [Name])]
 groupByBits [] = [] -- So that we may assume xs is nonempty in the second line (so we can use head)
 groupByBits xs = map (bisequence (fst . head, map snd)) $ groupBy ((==) `on` fst) xs
 
-generateIntegerParsers :: Q Exp -> IntegerParserConfig -> Q [Dec]
+{-|
+This function automatically generates lexer combinators for handling signed or unsigned integers.
+
+See 'IntegerParserConfig' for how to configure which combinators are generated.
+
+/Note:/ Due to staging restrictions in Template Haskell, the `IntegerParserConfig` must be
+defined in a separate module to where this function is used.
+Multiple configs can be defined in the same module.
+
+==== __Usage:__
+First, the config must be defined in another module.
+You can define multiple configs in the same module, as long as they are used in a different module.
+
+> {-# LANGUAGE TemplateHaskell, OverloadedLists #-}
+> module IntegerConfigs where
+> …
+> uIntCfg :: IntegerParserConfig
+> uIntCfg = emptyUnsignedIntegerParserConfig {
+>     prefix = "u",
+>     widths = [(B8, [t| Word8 |]), (B32, [t| Word32 |])],
+>     bases = [Hexadecimal, Decimal, Binary],
+>     includeUnbounded = False,
+>     signedOrUnsigned = Unsigned,
+>     collatedParser = Just "natural"
+>   }
+
+Then, we can feed this config, along with a quoted lexer, to `generateIntegerParsers`:
+
+> {-# LANGUAGE TemplateHaskell #-}
+> module Lexer where
+> import IntegerConfigs (uIntCfg)
+> …
+> lexer :: Lexer
+> lexer = …
+>
+> $(generateIntegerParsers [| lexer |] uIntCfg)
+
+This will generate the following combinators,
+
+>    ubinary8 :: Parsec Word8
+>    udecimal8 :: Parsec Word8
+>    uhexadecimal8 :: Parsec Word8
+>    ubinary32 :: Parsec Word32
+>    udecimal3 :: Parsec Word32
+>    uhexadecimal32 :: Parsec Word32
+>    natural8 :: Parsec Word8
+>    natural32 :: Parsec Word32
+
+@since 0.4.0.0
+
+-}
+generateIntegerParsers 
+  :: Q Exp               -- ^ The quoted 'Text.Gigaparsec.Token.Lexer.Lexer'
+  -> IntegerParserConfig -- ^ The configuration describing what numeric combinators to produce.
+  -> Q [Dec]             -- ^ The declarations of the specified combinators.
 generateIntegerParsers lexer cfg@IntegerParserConfig{..} = do
   (ubNames, concat -> ubDecs) <- unzip <$> mwhen includeUnbounded (lexerUnboundedParsers lexer cfg)
   (fwNames, fwBits, concat -> fwDecs) <- unzip3 <$> lexerFixedWidthIntParsers lexer cfg
@@ -202,9 +325,13 @@ bitsSuffix B16 = (++ "16")
 bitsSuffix B32 = (++ "32")
 bitsSuffix B64 = (++ "64")
 
-{- |
+{-| An empty `IntegerParserConfig`, which will generate nothing when given to `generateIntegerParsers`.
+Extend this using record updates, to tailor a config to your liking.
 
-By default, the `prefix` field is the empty string.
+By default, the `prefix` field is the empty string, which will likely cause issues if you do not override this.
+
+@since 0.4.0.0
+
 -}
 emptyIntegerParserConfig :: IntegerParserConfig
 emptyIntegerParserConfig =
@@ -217,9 +344,25 @@ emptyIntegerParserConfig =
     , collatedParser = Nothing
     }
 
+{-| An empty `IntegerParserConfig` for `Signed` integers, which will generate nothing when given to `generateIntegerParsers`.
+Extend this using record updates, to tailor a config to your liking.
+
+By default, the `prefix` field is the empty string, which will likely cause issues if you do not override this.
+
+@since 0.4.0.0
+
+-}
 emptySignedIntegerParserConfig :: IntegerParserConfig
 emptySignedIntegerParserConfig = emptyIntegerParserConfig{signedOrUnsigned = Signed}
 
+{-| An empty `IntegerParserConfig` for `Unsigned` integers, which will generate nothing when given to `generateIntegerParsers`.
+Extend this using record updates, to tailor a config to your liking.
+
+By default, the `prefix` field is the empty string, which will likely cause issues if you do not override this.
+
+@since 0.4.0.0
+
+-}
 emptyUnsignedIntegerParserConfig :: IntegerParserConfig
 emptyUnsignedIntegerParserConfig = emptyIntegerParserConfig{signedOrUnsigned = Unsigned}
 

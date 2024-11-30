@@ -1,5 +1,7 @@
 {-# LANGUAGE Trustworthy #-}
 
+{-# OPTIONS_HADDOCK hide #-}
+
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE ExistentialQuantification #-}
@@ -70,28 +72,53 @@ import Data.Maybe (fromMaybe)
 import Text.Gigaparsec.Internal.TH.VersionAgnostic (Name)
 import Text.Gigaparsec.Token.Lexer qualified as Lexer
 
-{- |
-Generate the given lexer combinators from a lexer.
+{-|
+Generates the specified lexer combinators using the quoted lexer.
 
-__Usage:__
+==== __Usage:__
 
 > import Text.Gigaparsec.Token.Lexer qualified as Lexer
 > import Text.Gigaparsec.Token.Lexer (Lexer)
 > lexer :: Lexer
 > $(lexerCombinators [| lexer |] ['Lexer.lexeme, 'Lexer.fully, 'Lexer.identifier, 'Lexer.stringLiteral])
-> -- This will generate the following definitions:
-> Lexer.Lexeme
-    lexeme_a7oi
-      = Text.Gigaparsec.Token.Patterns.project Lexer.lexeme lexer
+
+This will generate the following combinators/functions:
+
+> lexeme :: Lexeme
+> fully :: ∀ a . Parsec a -> Parsec a
+> identifier :: Parsec String
+> stringLiteral :: TextParsers String
+
+These will behave like their counterparts in "Text.Gigaparsec.Token.Lexer", except they will not need
+a 'Lexer' (or its subcomponents) as an argument.
+
+@since 0.4.0.0
 -}
-lexerCombinators ::
-  Q Exp -> -- The lexer
-  [Name] -> -- The combinators to generate
-  Q [Dec]
+lexerCombinators
+  :: Q Exp -- The lexer
+  -> [Name] -- The combinators to generate
+  -> Q [Dec]
 lexerCombinators lexer ns = lexerCombinatorsWithNames lexer (zip ns (map nameBase ns))
 
-{- |
-Generate the given lexer combinators with custom names, from a lexer.
+{-|
+Generates the specified lexer combinators with the specified names using the quoted lexer.
+
+==== __Usage:__
+
+> import Text.Gigaparsec.Token.Lexer qualified as Lexer
+> import Text.Gigaparsec.Token.Lexer (Lexer)
+> lexer :: Lexer
+> $(lexerCombinatorsWithNames [| lexer |] [('Lexer.lexeme, "myLexeme"), ('Lexer.fully, "myFully")])
+
+This will generate the following combinators/functions:
+
+> myLexeme :: Lexeme
+> myFully :: ∀ a . Parsec a -> Parsec a
+
+These will behave like their counterparts in "Text.Gigaparsec.Token.Lexer", except they will not need
+a 'Lexer' (or its subcomponents) as an argument.
+
+@since 0.4.0.0
 -}
 lexerCombinatorsWithNames ::
   Q Exp -> -- The lexer
@@ -99,19 +126,20 @@ lexerCombinatorsWithNames ::
   Q [Dec]
 lexerCombinatorsWithNames lexer = fmap concat . traverse (uncurry (lexerCombinatorWithName lexer))
 
-{- |
+{-|
 Create a single lexer combinator with a given name, defined in terms of the lexer.
 -}
-lexerCombinatorWithName ::
-  Q Exp ->
-  Name -> -- The name of the old combinator
-  String -> -- the new name of the combinator
-  Q [Dec]
+lexerCombinatorWithName
+  :: Q Exp
+  -> Name -- The name of the old combinator
+  -> String -- the new name of the combinator
+  -> Q [Dec]
 lexerCombinatorWithName lexer old nm = do
   newTp <- getLexerCombinatorType old True
   mkLexerCombinatorDec lexer nm old newTp
 
-{- | Constructs the combinator using the given type.
+{-| 
+Constructs the combinator using the given type.
 Calculates the definition of the combinator using a typeclass (if possible).
 -}
 mkLexerCombinatorDec ::
@@ -135,7 +163,8 @@ mkLexerCombinatorDec lexer nm old tp = do
     , funD newX [clause [] (normalB [|project $(varE old) $lexer|]) []]
     ]
 
-{- | Constructs the combinator using the given type.
+{-| 
+Constructs the combinator using the given type.
 Calculates the definition of the combinator using a typeclass (if possible).
 -}
 mkLexerCombinatorDecWithProj ::
@@ -162,7 +191,8 @@ mkLexerCombinatorDecWithProj lexer nm old tp proj = do
       , funDsingleClause newX [|project ($(varE old) . $proj) $lexer|]
       ]
 
-{- | Figures out the type of the combinator minus the domain; this will be one of a 'Lexer' component, or any other subcomponents (e.g. 'Symbol' or 'Space').
+{-| 
+Figures out the type of the combinator minus the domain; this will be one of a 'Lexer' component, or any other subcomponents (e.g. 'Symbol' or 'Space').
 Calculates the domain type, and the return type of the new combinator.
 The boolean flag set to True means one should ensure the domain type gives a specific combinator,
 and doesn't lead to an ambiguous return type.
@@ -236,19 +266,19 @@ getLexerCombinatorType old checkType = do
 ---------------------------------------------------------------------------------------------------
 -- Util functions
 
-{- |
+{-|
 Denote the type of an arrow; it is either normal or linear.
 -}
 type ArrowTp :: *
 data ArrowTp = StdArrow | LinearArrow
 
-{- |
+{-|
 Get the domain of a function type.
 Keep any prefixed constraints and type variable quantifiers as a prefixing function.
 -}
-fnTpDomain ::
-  Type ->
-  Q (Type -> Type, Type, ArrowTp, Type)
+fnTpDomain
+  :: Type
+  -> Q (Type -> Type, Type, ArrowTp, Type)
 -- The head of the type, includes any preceding constraints
 -- and foralls. this is a function which prefixes the given type with the constraints/foralls
 -- The domain and codomain of the type

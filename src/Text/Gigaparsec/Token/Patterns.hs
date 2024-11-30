@@ -16,19 +16,64 @@ of Haskell, or the extensions enabled. Please report any issues to the maintaine
 @since 0.2.2.0
 -}
 module Text.Gigaparsec.Token.Patterns (
+  -- * Overloaded Strings
   overloadedStrings,
+  -- * Lexer Combinators
+  {-|
+  These functions will generate combinators for parsing things like identifiers, keywords, etc,
+  as described by a 'Lexer'.
+
+  The combinators will behave like their counterparts in "Text.Gigaparsec.Token.Lexer",
+  except they do not need to be given a lexer(/a subcomponent of a lexer) as an argument.
+  
+  * 'lexerCombinators' will generate these lexer combinators using the same name as the original combinators.
+  * 'lexerCombinatorsWithNames' lets you rename the generated combinator; otherwise it behaves exactly as 'lexerCombinators'.
+
+  The combinators for numeric literals need their own generation function `generateIntegerParsers`.
+  If you try to generate a `Text.Gigaparsec.Token.Lexer.decimal` parser using `lexerCombinators`,
+  you will get an error!
+  
+  ==== __Examples:__
+
+  The combinator "Text.Gigaparsec.Token.Lexer.identifier" is used for parsing identifiers, and has the type,
+
+  > Lexer.identifier :: Lexer -> Parsec String
+
+  It is annoying to have to feed the lexer as the initial argument, as this will be fixed throughout the parser.
+  Usually, one ends up writing their own combinator:
+
+  > identifier :: Parsec String
+  > identifier = Lexer.identifier lexer
+
+  Writing these by hand is tedious; especially if we wish to use multiple such combinators.
+  This is where `lexerCombinators` comes in:
+
+  > $(lexerCombinators [| lexer |] ['Lexer.identifier])
+
+  will generate the combinator,
+
+  > identifier :: Parsec String
+  > identifier = Lexer.identifier lexer
+
+  If we wish to use multiple combinators, we just add each one to the list.
+  For example,
+
+  > $(lexerCombinators [| lexer |] ['Lexer.identifier, 'Lexer.fully, 'Lexer.softKeyword, 'Lexer.softOperator])
+
+
+  -}
   lexerCombinators,
   lexerCombinatorsWithNames,
-  -- * Integer Parsers
+  -- ** Integer Parsers
   generateIntegerParsers,
-  -- ** IntegerParserConfig
+  -- *** IntegerParserConfig
   IntegerParserConfig,
   prefix, widths, bases, includeUnbounded, signedOrUnsigned, collatedParser,
-  -- *** Presets
+  -- **** Presets
   emptyIntegerParserConfig,
   emptySignedIntegerParserConfig,
   emptyUnsignedIntegerParserConfig,
-  -- *** Associated Types
+  -- **** Associated Types
   SignedOrUnsigned(..),
   IntLitBases(..),
   IntLitBase(..),
