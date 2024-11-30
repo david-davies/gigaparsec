@@ -2,6 +2,8 @@
 {-# LANGUAGE DeriveFunctor, StandaloneDeriving, NamedFieldPuns, CPP #-}
 #include "portable-unlifted.h"
 {-# OPTIONS_HADDOCK hide #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-|
 Module      : Text.Gigaparsec.Internal
 Description : Internals of Gigaparsec
@@ -30,6 +32,7 @@ import Control.Selective (Selective(select))
 import Data.Set (Set)
 
 CPP_import_PortableUnlifted
+import Control.Monad.Error.Class (MonadError (..))
 
 {-
 Notes:

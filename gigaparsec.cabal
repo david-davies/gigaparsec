@@ -133,7 +133,8 @@ library
                       pretty-terminal  >= 0.1.0 && < 0.2,
                       template-haskell >= 2.16  && < 3,
                       rt               >= 0.1   && < 0.2,
-                      transformers     >= 0.5.6 && < 0.7
+                      transformers     >= 0.5.6 && < 0.7,
+                      mtl              >= 2     && < 3,
 
     -- Modules included in this library but not exported.
     -- other-modules:

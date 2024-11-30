@@ -17,7 +17,7 @@ module Text.Gigaparsec.Combinator.NonEmpty (some, someTill, sepBy1, sepEndBy1, e
 
 
 import Text.Gigaparsec.Parser 
-import Text.Gigaparsec (Parsec, notFollowedBy)
+import Text.Gigaparsec (Parsec)
 import Text.Gigaparsec.Combinator qualified as Combinator (manyTill, sepEndBy1)
 
 import Control.Applicative (liftA2, many)
