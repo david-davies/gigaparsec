@@ -17,11 +17,14 @@ module ExprLang.Lexer (
   keyword,
   operator,
   integer,
+  integer64,
   identifier,
   fully,
   alter,
   whiteSpace,
 ) where
+
+import ExprLang.Lexer.IntConfig (uIntCfg, sIntCfg)
 
 import Text.Gigaparsec.Token.Descriptions qualified as Desc
 import Text.Gigaparsec.Token.Lexer qualified as Lexer
@@ -36,8 +39,14 @@ import Data.Char qualified as Char (GeneralCategory (Space))
 import Data.Int (Int64)
 import Data.Set (Set)
 import Text.Gigaparsec (Parsec, (<|>))
-import Text.Gigaparsec.Token.Patterns (lexerCombinators, lexerCombinatorsWithNames, overloadedStrings, lexerUnsignedParsers, lexerUnsignedFixedWidthParsers)
-import Data.Word (Word8)
+import Text.Gigaparsec.Token.Patterns 
+  -- lexerCombinators, 
+  -- lexerCombinatorsWithNames, 
+  -- overloadedStrings, 
+  -- generateIntegerParsers, 
+  -- IntegerParserConfig, 
+  -- emptyIntegerParserConfig)
+import Data.Word (Word8, Word32)
 import Text.Gigaparsec.Internal.Token.BitBounds (Bits(B8))
 
 -- | The reserved keywords of the language
@@ -108,27 +117,28 @@ $( lexerCombinatorsWithNames
     ]
  )
 
-$( lexerUnsignedParsers [| lexer |] "u")
+
 
 -- Generate the OverloadedStrings for the lexer.
 $(overloadedStrings [|lexer|])
 
-$( lexerUnsignedFixedWidthParsers [| lexer |] "u" [(B8, [t|Word8|])])
+$(generateIntegerParsers [| lexer |] uIntCfg)
+$(generateIntegerParsers [| lexer |] sIntCfg)
 
 {- | Parses a single \'integer\' token.
 This may be written in decimal, hexadecimal, or binary form.
 -}
-{-# INLINE integer #-}
-integer :: Parsec Int64
-integer =
-        wrap Lexer.decimal64
-    <|> wrap Lexer.hexadecimal64
-    <|> wrap Lexer.binary64
- where
-  -- Have to process the output as gigaparsec doesn't yet support `Int64` as a valid output
-  -- type of the numeric processors of the lexer.
-  {-# INLINE wrap #-}
-  wrap p = fromInteger <$> p integerParsers
+-- {-# INLINE integer #-}
+-- integer :: Parsec Int64
+-- integer =
+--         wrap Lexer.decimal64
+--     <|> wrap Lexer.hexadecimal64
+--     <|> wrap Lexer.binary64
+--  where
+--   -- Have to process the output as gigaparsec doesn't yet support `Int64` as a valid output
+--   -- type of the numeric processors of the lexer.
+--   {-# INLINE wrap #-}
+--   wrap p = fromInteger <$> p integerParsers
 
 {- | Change how whitespace is parsed while running the given parser @p@.
 The given predicate @pred@ will return 'True' for what characters are considered whitespace.

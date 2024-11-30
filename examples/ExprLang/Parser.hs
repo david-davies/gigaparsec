@@ -43,7 +43,7 @@ anyWhiteSpace = satisfy isSpace $> ()
 
 atom :: Parsec Expr
 atom = ExprAtom <$> (
-        (AtomInt <$> integer <?> ["number"])
+        (AtomInt . fromInteger <$> integer64 <?> ["number"])
     <|> (AtomVar <$> identifier <?> ["variable"])
   )
   <|> exprParen <?> ["parentheses"]
