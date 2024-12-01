@@ -103,6 +103,7 @@ library
                       Text.Gigaparsec.State,
                       Text.Gigaparsec.Token.Descriptions,
                       Text.Gigaparsec.Token.Errors,
+                      Text.Gigaparsec.Token.Indentation,
                       Text.Gigaparsec.Token.Lexer,
                       Text.Gigaparsec.Token.Patterns,
 
@@ -221,3 +222,28 @@ benchmark perf-test
         deepseq >= 1.4 && < 1.6
 
     main-is:          Main.hs
+
+executable small-python
+    
+    import:           extensions, base
+    
+    hs-source-dirs: 
+        examples/indentation/
+        examples/indentation/SmallPython
+    main-is:
+        SmallPython.hs
+    other-modules:
+        SmallPython.AST,
+        SmallPython.AST.ToPython,
+        SmallPython.Parser,
+        SmallPython.Lexer,
+        SmallPython.Lexer.Description,
+    
+    build-depends:
+        gigaparsec,
+        containers >= 0.6 && < 0.8,
+        mtl >= 2.0 && < 3.0,
+        pretty-simple >= 4.0 && < 5,
+
+    default-language: Haskell2010
+
