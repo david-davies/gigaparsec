@@ -329,22 +329,26 @@ myIndentSome mlvl ws p = make (fromOldIndent mlvl) $ \ref -> do
     incorrectIndent2 mExpected newIndentLvl = fail ("woops" :| [])
 
 
+-- indentBlock :: forall b . 
+
+
+
 -- Doesn't do atomic, does consume last newline
 myIndentSome2
   :: forall b . 
      MIndentLevel
-  -> Parsec () -- whitespace consumer, must consume newlines
+  -> Parsec () -- whitespace consumer, does not need to consume newlines
   -> Parsec b  -- the indented items to parse
   -> Parsec (NonEmpty b)
 myIndentSome2 mlvl ws p = 
   make (fromOldIndent mlvl) $ \indentRef -> do
     optional endOfLine *> ws
-    some (indentedItem indentRef) <* debugIndent "indents done" unit
+    some (indentedItem indentRef)
   where
     indentedItem :: Ref r₂ IndentConfig ->  Parsec b
     indentedItem indentRef = do
       checkIndentLvl indentRef
-      (debugIndent "indented item" p) <* (debugIndent "eoiol" endOfInputOrLine)
+      p <* endOfInputOrLine
 
     endOfInputOrLine :: Parsec ()
     endOfInputOrLine = (eof <|> eols) <?> ["end of indent block"]
@@ -355,8 +359,7 @@ myIndentSome2 mlvl ws p =
 
     -- It is essential that this does not consume input
     checkIndentLvl ref = do
-      -- whenM (isJust <$> option eof) empty
-      --  ["indentMany: end of input reached"]
+      -- do we need to check `eof` here?
       newIndentLvl <- indentLevel
       !mExpectedIndentLvl <- get ref
       case mExpectedIndentLvl of
