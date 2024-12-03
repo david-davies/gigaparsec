@@ -1,222 +1,595 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# OPTIONS_GHC -Wno-missing-kind-signatures #-}
-{-# OPTIONS_GHC -Wno-missing-deriving-strategies #-}
-{-# OPTIONS_GHC -Wno-missing-role-annotations #-}
-{-# OPTIONS_GHC -Wno-missing-import-lists #-}
-module Text.Gigaparsec.Token.Indentation where
+{-# LANGUAGE Safe #-}
+{-# LANGUAGE NoImplicitPrelude, PatternSignatures #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-|
+Module      : Text.Gigaparsec.Token.Indentation
+Description : This module defines combinators for handling indentation-sensitive grammars.
+License     : BSD-3-Clause
+Maintainer  : Jamie Willis, Gigaparsec Maintainers
+Stability   : experimental
+
+This module defines some core combinators for handling indentation-sensitive grammars, 
+including the handling of line-folds and indented blocks.
+
+@since 0.4.0.0
+
+-}
+module Text.Gigaparsec.Token.Indentation (
+  -- * Indentation-Sensitive Parser Constructors
+  nonIndented,
+  indentMany,
+  indent,
+  indentSome,
+  indent1,
+  -- ** Fixed Indentation
+  indentManyAt,
+  indentSomeAt,
+
+  -- ** Indent-After
+  -- *** Many
+  indentManyAfter,
+  indentAfter,
+  thenIndent,
+  -- *** Some
+  indentSomeAfter,
+  indentAfter1,
+  thenIndent1,
+  -- * Line-Folds
+  -- $lineFolding
+  lineFold,
+  lineFoldWs,
+
+  -- * Megaparsec-style Indentation Blocks.
+  {-|
+  The combinators here should be more familiar to users of [megaparsec](https://hackage.haskell.org/package/megaparsec).
+  They can all be emulated by the combinators above.
+  -}
+  IndentOpt(..),
+  indentBlock,
+  indentGuard,
+  lineFoldMegaparsec
+  ) where
 
 import Prelude hiding (fail)
-import Data.List.NonEmpty (NonEmpty((:|)))
-import Text.Gigaparsec (Parsec, atomic, eof)
-import Text.Gigaparsec.Errors.Combinator (fail)
-import Text.Gigaparsec.Position (col)
+import Data.List.NonEmpty (NonEmpty)
+import Text.Gigaparsec (Parsec, atomic, unit)
 import Text.Gigaparsec.Char (endOfLine, newline)
-import Text.Gigaparsec.Combinator (option, guardS, whenS, ifS)
-import Data.Maybe (isJust, fromMaybe)
-import Text.Gigaparsec.State (make, set, get, Ref)
-import Control.Applicative (many, empty)
-import Control.Monad (unless)
+import Data.Maybe (fromMaybe)
+import Control.Applicative (Alternative ((<|>), many))
+import Control.Monad (unless, void)
 import Text.Gigaparsec.Combinator.NonEmpty (some)
-import Text.Gigaparsec.Debug
-import Data.List.NonEmpty qualified as NE
 
-type IndentLevel = Word
+import Text.Gigaparsec.Internal.Token.Indentation (
+  indentLevel,
+  nonIndented, IndentLevel
+  )
+import Text.Gigaparsec.Internal.Token.Indentation qualified as Internal
+import Text.Gigaparsec.Token.Lexer (Space)
+import Text.Gigaparsec.Internal.Token.Lexer (Space, _alterWs, whiteSpace)
+import Text.Gigaparsec.Combinator (skipMany)
 
-data IndentOpt a b = 
-    {-|
-    Parse no indented tokens, just return the value.
-    -}
-    IndentNone a
-  | {-|
-    Parse zero or more indented tokens which start at the given indentation level, collecting their results.
 
-    @`IndentMany` mlvl f p@ uses the given indentation level @mlvl@;
-    if @mlvl@ `Nothing`, then uses the indentation level of the first token.
-    Then, repeatedly parses @p@ at the indentation level, once per newline.
-    Then, applies @f@ to the results @x₁@, ..., @xₙ@ from each parse of @p@ (where @n@ ≥ 0),
-    i.e. @f [x₁, ..., xₙ]@
-    -} 
-    IndentMany 
-      (Maybe IndentLevel) -- ^ The indentation at which the first token should start.
-      ([b] -> Parsec a)   -- ^ What to do with the parsed lines.
-      (Parsec b)          -- ^ How to parse each indented line.
-  | {-|
-    Parse one or more indented tokens which start at the given indentation level, collecting their results.
+{- $lineFolding
+This description of line-folds is based on that given by [Karpov](https://markkarpov.com/tutorial/megaparsec.html#adding-line-folds).
 
-    @`IndentSome` mlvl f p@ uses the given indentation level @mlvl@;
-    if @mlvl@ `Nothing`, then uses the indentation level of the first token.
-    Then, repeatedly parses @p@ at the indentation level, once per newline.
-    Then, applies @f@ to the results @x₁@, ..., @xₙ@ from each parse of @p@ (where @n@ ≥ 1),
-    i.e. @f [x₁, ..., xₙ]@
-    -}  
-    IndentSome 
-      (Maybe IndentLevel)      -- ^ The indentation at which the first token should start.
-      (NonEmpty b -> Parsec a) -- ^ What to do with the parsed lines.
-      (Parsec b)               -- ^ How to parse each indented line.
+A /line-fold/ is an expression consisting of many elements that may be on the same line, 
+or spread across multiple lines, where each subsequent line may be at any indentation greater than that of the first.
+As each subsequent line may be at *different* indentations, line-folds are subtly distinct from indentation blocks,
+in which each line must be at the *same* indentation.
 
-indentLevel :: Parsec IndentLevel 
-indentLevel = col
+An example of a language featuring line-folding is Haskell :)
 
-incorrectIndent :: Ordering -> IndentLevel -> IndentLevel -> Parsec a
-incorrectIndent ord refLvl actLvl = fail ("Bad indent you no indent right" :| [])
+This module provides three combinators for line-folding, use whichever you prefer:
 
-indentGuard 
-  :: Parsec ()  -- ^ whitespace parser
-  -> Ordering 
-  -> IndentLevel       -- ^ reference indent level
-  -> Parsec IndentLevel
+* 'lineFold'
+* 'lineFoldWs'
+* 'lineFoldMegaparsec'
+
+==== __Example__
+
+In the presence of line-folding, each of these programs should have the same meaning:
+> foo bar baz
+
+> foo
+>   bar  baz
+
+> foo
+>    bar
+>  baz
+
+And the following programs do /not/ have the same meaning as @foo bar baz@:
+
+> foo
+> bar
+> baz
+
+and,
+
+> foo
+>   bar
+> baz
+
+We may choose from any of the line-folding combinators to create a parser capable 
+of handling these expressions.
+
+===== With 'lineFold'
+
+> symbol :: String -> Parsec ()
+
+'lineFold' is probably the easiest combinator to work with.
+> myFold = lineFold $ do
+>   symbol "foo"
+>   symbol "bar"
+>   symbol "baz"
+
+===== With 'lineFoldWs'
+
+'lineFoldWs' is similar to `lineFoldMegaparsec`, except it assumes the given whitespace parser
+*does not* consume newlines.
+
+> -- symbol here is parameterised by a whitespace parser
+> symbol :: Parsec () -> String -> Parsec ()
+> -- ws *must not* consume newlines.
+> ws :: Parsec ()
+>
+> myFold = lineFoldWs ws $ \ws' -> do
+>   symbol ws' "foo"
+>   symbol ws' "bar"
+>   symbol ws "baz"
+
+===== Megaparsec-style
+
+Again, this is lifted from [Karpov](https://markkarpov.com/tutorial/megaparsec.html#adding-line-folds).
+
+> -- symbol here is parameterised by a whitespace parser
+> symbol :: Parsec () -> String -> Parsec ()
+> -- ws *must* consume newlines.
+> ws :: Parsec ()
+>
+> myFold = L.lineFold ws $ \ws' -> do
+>   L.symbol ws' "foo"
+>   L.symbol ws' "bar"
+>   L.symbol ws  "baz" -- for the last symbol we use the normal space consumer
+
+-}
+
+{-|
+Parse zero or more items, each at the same indentation level as the first item parsed.
+
+@`indentMany` ws p@ first consumes any initial whitespace (with @ws@) and newlines,
+and then parses a @p@ at some indentation @x@.
+Then parses any newlines and whitespace.
+This repeats for @p@s that are at the same indentation @x@, 
+collecting the results in a list.
+If the initial @p@ fails without consuming input, then this combinator succeeds, returning @[]@.
+
+This combinator fails iff any @p@ fails having consumed input.
+
+This combinator consumes input iff there are any initial newlines or @ws@, and/or if @p@ does also.
+
+/Note:/ This combinator will consume any final newlines at the end of an indentation block.
+
+@since 0.4.0.0
+
+-}
+{-# INLINE indentMany #-}
+indentMany
+  :: forall b
+  .  Parsec ()  -- ^ @ws@, whitespace consumer. Does not need to consume newlines.
+  -> Parsec b   -- ^ @p@, the indented items to parse.
+  -> Parsec [b] -- ^ A parser that parses zero or more @p@s, each at the same indentation, 
+                -- collecting their results in a list.
+indentMany = Internal.indentMany Nothing
+
+{-|
+Parse zero or more items, each at the given indentation level.
+
+@`indentManyAt` lvl ws p@ first consumes any initial whitespace (with @ws@) and newlines,
+and then checks that the current indentation is @lvl@.
+If so, parses a @p@, then parses any newlines and whitespace.
+The indentation check and parsing repeats for @p@s that are at the same indentation @lvl@, 
+collecting the results in a list.
+
+If either the first indentation check or the initial @p@ fails without consuming input, 
+then this combinator succeeds, returning @[]@.
+
+This combinator fails iff any @p@ fails having consumed input.
+
+This combinator consumes input iff there are any initial newlines or @ws@, and/or if @p@ does also.
+
+/Note:/ This combinator will consume any final newlines at the end of an indentation block.
+
+@since 0.4.0.0
+
+-}
+{-# INLINE indentManyAt #-}
+indentManyAt
+  :: forall b
+  .  IndentLevel  -- ^ @lvl@, the reference indentation level.
+  -> Parsec ()    -- ^ @ws@, whitespace consumer. Does not need to consume newlines.
+  -> Parsec b     -- ^ @p@, the indented items to parse.
+  -> Parsec [b]   -- ^ A parser that parses zero or more @p@s, each at the indentation @lvl@, 
+                  -- collecting their results in a list.
+indentManyAt = Internal.indentMany . Just
+
+
+{-|
+Parse one or more items, each at the same indentation level as the first item parsed.
+
+@`indentSome` ws p@ first consumes any initial whitespace (with @ws@) and newlines,
+and then parses a @p@ at some indentation @x@.
+Then parses any newlines and whitespace.
+This repeats for @p@s that are at the same indentation @x@, 
+collecting the results in a list.
+
+If the initial @p@ fails without consuming input, this combinator fails.
+This combinator also fails if any @p@ fails having consumed input.
+
+This combinator consumes input iff there are any initial newlines or @ws@, and/or if @p@ does also.
+
+/Note:/ This combinator will consume any final newlines at the end of an indentation block.
+
+@since 0.4.0.0
+
+-}
+{-# INLINE indentSome #-}
+indentSome
+  :: forall b
+  .  Parsec ()            -- ^ @ws@, whitespace consumer. Does not need to consume newlines.
+  -> Parsec b             -- ^ @p@, the indented items to parse.
+  -> Parsec (NonEmpty b)  -- ^ A parser that parses at least one @p@, each at the same indentation, 
+                          -- collecting their results in a list.
+indentSome = Internal.indentSome Nothing
+
+{-|
+Parse one or more items, each at the given indentation level.
+
+@`indentSomeAt` lvl ws p@ first consumes any initial whitespace (with @ws@) and newlines,
+and then checks that the current indentation is @lvl@.
+If so, parses a @p@, then parses any newlines and whitespace.
+The indentation check and parsing repeats for @p@s that are at the same indentation @lvl@, 
+collecting the results in a list.
+
+If either the first indentation check or the initial @p@ fails without consuming input, 
+then this combinator fails.
+This combinator also fails if any @p@ fails, having consumed input.
+
+This combinator consumes input iff there are any initial newlines or @ws@, and/or if @p@ does also.
+
+/Note:/ This combinator will consume any final newlines at the end of an indentation block.
+
+@since 0.4.0.0
+
+-}
+{-# INLINE indentSomeAt #-}
+indentSomeAt
+  :: forall b
+  .  IndentLevel         -- ^ @lvl@, the reference indentation level.
+  -> Parsec ()           -- ^ @ws@, whitespace consumer. Does not need to consume newlines.
+  -> Parsec b            -- ^ @p@, the indented items to parse.
+  -> Parsec (NonEmpty b) -- ^ A parser that parses at least one @p@, each at the indentation @lvl@, 
+                         -- collecting their results in a list.
+indentSomeAt = Internal.indentSome . Just
+
+{-|
+Alias for `indentMany`.
+
+@since 0.4.0.0
+
+-}
+{-# INLINE indent #-}
+indent :: Parsec () -> Parsec b -> Parsec [b]
+indent = indentMany
+
+{-|
+Alias for `indentSome`.
+
+@since 0.4.0.0
+
+-}
+{-# INLINE indent1 #-}
+indent1 :: Parsec () -> Parsec b -> Parsec (NonEmpty b)
+indent1 = indentSome
+
+---------------------------------------------------------------------------------------------------
+-- Indent After
+
+{-|
+Parse the first item, then parse zero or more of the second items, each must be at the same indentation
+which is greater than that of the first item.
+
+@`indentManyAfter` ws p q@ first consumes any initial whitespace (with @ws@) and newlines,
+and then saves the current indentation level, @lvl@ (this will be the indentation of @p@).
+Then, parses a @p@, and then parses many @q@s, each must be at the indentation @lvl@.
+The results of @p@ and a list of all the results of the @q@s are returned as a pair.
+
+If either the first indentation check or the initial @p@ fails without consuming input, 
+then this combinator fails.
+This combinator also fails if any @q@ fails, having consumed input.
+
+This combinator consumes input iff there are any initial newlines or @ws@, and/or if @p@ does also.
+
+/Note:/ This combinator will consume any final newlines at the end of an indentation block.
+
+@since 0.4.0.0
+
+-}
+{-# INLINE indentManyAfter #-}
+indentManyAfter :: Parsec () -> Parsec a -> Parsec b -> Parsec (a, [b])
+indentManyAfter ws p q = do
+  refLvl <- indentLevel
+  (,) <$> p <*> indentManyAt refLvl ws q
+
+{-|
+Alias for `indentManyAfter`.
+
+@since 0.4.0.0
+
+-}
+{-# INLINE indentAfter #-}
+indentAfter :: Parsec () -> Parsec a -> Parsec b -> Parsec (a, [b])
+indentAfter = indentManyAfter
+
+{-|
+Alias for `indentAfter`.
+Most useful as an infix operator:
+
+> p `thenIndent` q
+
+@since 0.4.0.0
+
+-}
+{-# INLINE thenIndent #-}
+thenIndent :: Parsec () -> Parsec a -> Parsec b -> Parsec (a, [b])
+thenIndent = indentManyAfter
+
+{-|
+Parse the first item, then parse one or more of the second items, each must be at the same indentation
+which is greater than that of the first item.
+
+@`indentSomeAfter` ws p q@ first consumes any initial whitespace (with @ws@) and newlines,
+and then saves the current indentation level, @lvl@ (this will be the indentation of @p@).
+Then, parses a @p@, and then parses one or more @q@s, each must be at the indentation @lvl@.
+The results of @p@ and a list of all the results of the @q@s are returned as a pair.
+
+If either the first indentation check or the initial @p@ fails without consuming input, 
+then this combinator fails.
+This combinator also fails if any @q@ fails, having consumed input, or if no @q@ succeeds.
+
+This combinator consumes input iff there are any initial newlines or @ws@, and/or if @p@ and @q@ do also.
+
+/Note:/ This combinator will consume any final newlines at the end of an indentation block.
+
+@since 0.4.0.0
+
+-}
+{-# INLINE indentSomeAfter #-}
+indentSomeAfter :: Parsec () -> Parsec a -> Parsec b -> Parsec (a, NonEmpty b)
+indentSomeAfter ws p q = do
+  refLvl <- indentLevel
+  (,) <$> p <*> indentSomeAt refLvl ws q
+
+{-|
+Alias for `indentSomeAfter`.
+
+@since 0.4.0.0
+
+-}
+{-# INLINE indentAfter1 #-}
+indentAfter1 :: Parsec () -> Parsec a -> Parsec b -> Parsec (a, NonEmpty b)
+indentAfter1 = indentSomeAfter
+
+{-|
+Alias for `indentSomeAfter`.
+Most useful as an infix operator:
+
+> p `thenIndent1` q
+
+@since 0.4.0.0
+
+-}
+{-# INLINE thenIndent1 #-}
+thenIndent1 :: Parsec () -> Parsec a -> Parsec b -> Parsec (a, NonEmpty b)
+thenIndent1 = indentSomeAfter
+
+
+---------------------------------------------------------------------------------------------------
+-- Line folds 
+
+{-| Run the given parser @p@ as a line-fold, allowing it to be spread across multiple lines,
+as long as each subsequent line is more indented than the first.
+
+This parser fails if @p@ does, including if @p@ cannot finish parsing before the end of the indented items.
+
+This parser consumes any initial whitespace, and any input if @p@ does also.
+
+@since 0.4.0.0
+
+-}
+lineFold :: Space -> Parsec a -> Parsec a
+lineFold sp p = do
+  let ws = whiteSpace sp
+  refLvl <- ws *> indentLevel
+  let ws' =
+        {- If it fails, then it should be treated like endofinput
+        so if the parser can still give a complete object, we are gucci.
+        
+        Failure should be atomic though, so that it doesn't consume input,
+        which will make it interact better with combinators like `some` and `many`.
+        -}
+        -- TODO: add a flag/test to see if ws can parse newlines? 
+        -- cause then we don't need to do this skipMany stuff
+        void $ atomic (indentGuard (ws *> skipMany (newline *> ws)) GT refLvl)
+  _alterWs sp ws' p
+
+
+{-| This is similar to `lineFoldMegaparsec`, except the whitespace parser must *not* consume newlines.
+
+Creates a parser that supports line-folding. 
+
+@'lineFoldWs' ws p@ takes a whitespace parser @ws@, and a parser @p@ parameterised by a whitespace parser 
+(i.e. it is a function expecting a whitespace parser, returning a parser).
+
+The whitespace parser @ws@ consumes whitespace between each component of the line fold, 
+and it /must not/ consume newlines.
+The parser @p@ receives an augmented whitespace parser that checks indentation automatically
+and is able to consume newlines,
+which @p@ may then use to consume the line fold.
+
+@since 0.4.0.0
+
+-}
+lineFoldWs
+  :: Parsec () -- ^ @ws@, the whitespace parser. Must not consume newlines.
+  -> (Parsec () -> Parsec a) -- ^ @p@, a parser parameterised by a whitespace consumer.
+  -> Parsec a
+lineFoldWs ws p = do
+  refLvl <- ws *> indentLevel
+  -- we only need to check indentation after parsing a newline.
+  let ws' =  void (some (endOfLine *> ws) *> indentGuard unit GT refLvl) <|> ws
+  p ws'
+
+
+---------------------------------------------------------------------------------------------------
+-- Megaparsec Style stuff
+
+{-|
+An @`IndentOpt` a b@ contains a parser for @a@s that can be collected to form a @b@.
+These describe the behaviour for parsing an indented token with `indentBlock`.
+
+__Note:__ [megaparsec](https://hackage.haskell.org/package/megaparsec) users should be aware this type
+is somewhat different from `Text.Megaparsec.Char.Lexer.IndentOpt` in @megaparsec@, 
+in which the `IndentSome` and `IndentMany` constructors take a return continuation.
+This is not necessary, as we instead use GADTs to index `IndentOpt` by the output type of each constructor.
+
+@since 0.4.0.0
+
+-}
+type IndentOpt :: * -> * -> *
+data IndentOpt a :: * -> * where
+  {-|
+  Parse no indented tokens, just return the value.
+
+  @since 0.4.0.0
+
+  -}
+  IndentNone :: a -> IndentOpt a a
+  {-|
+  Parse zero or more indented tokens which start at the given indentation level, collecting their results.
+
+  @`IndentMany` mlvl f p@ uses the given indentation level @mlvl@;
+  if @mlvl@ is `Nothing`, then uses the indentation level of the first token.
+  Then, repeatedly parses @p@ at the indentation level, once per newline.
+  Then, applies @f@ to the results @x₁@, ..., @xₙ@ from each parse of @p@ (where @n@ ≥ 0),
+  i.e. @f [x₁, ..., xₙ]@
+
+  @since 0.4.0.0
+
+  -}
+  IndentMany
+    :: Maybe IndentLevel -- ^ The indentation at which the first token should start.
+    -> Parsec a          -- ^ How to parse each indented line.
+    -> IndentOpt a [a]
+  {-|
+  Parse one or more indented tokens which start at the given indentation level, collecting their results.
+
+  @`IndentSome` mlvl f p@ uses the given indentation level @mlvl@;
+  if @mlvl@ is `Nothing`, then uses the indentation level of the first token.
+  Then, repeatedly parses @p@ at the indentation level, once per newline.
+  Then, applies @f@ to the results @x₁@, ..., @xₙ@ from each parse of @p@ (where @n@ ≥ 1),
+  i.e. @f [x₁, ..., xₙ]@
+
+  @since 0.4.0.0
+
+  -}
+  IndentSome
+    :: Maybe IndentLevel      -- ^ The indentation at which the first token should start.
+    -> Parsec a               -- ^ How to parse each indented line.
+    -> IndentOpt a (NonEmpty a)
+
+
+{-|
+Ensures the given ordering between the actual and the given indentation holds,
+returning the former.
+
+@'indentGuard' ws ord refLvl@ will parse any initial whitespace using @ws@, 
+and will compare @refLvl@ with the current indentation.
+
+* If this comparison is the same as @ord@, this parser succeeds, returning the new indentation.
+* Otherwise, this combinator fails.
+
+This combinator consumes input if and only if there is any initial whitespace.
+
+@since 0.4.0.0
+
+-}
+{-# INLINE indentGuard #-}
+indentGuard
+  :: Parsec ()          -- ^ How to consume whitespace.
+  -> Ordering           -- ^ How the actual indentation should be compared with the reference indentation.
+  -> IndentLevel        -- ^ The reference indentation with which the actual indentation should be compared.
+  -> Parsec IndentLevel -- ^ The actual indentation level.
 indentGuard ws ord refLvl = do
   actLvl <- ws *> indentLevel
-  if compare actLvl refLvl == ord
-    then return actLvl
-    else incorrectIndent ord refLvl actLvl
+  unless (compare actLvl refLvl == ord) $
+    Internal.throwIndentationError (Internal.ErrIndentNotOrd ord refLvl actLvl)
+  return actLvl
 
-indentBlock 
+{-|
+Parse a 'reference' token @ref@, and then parse a series of items that must all be at the same indentation,
+which itself must be greater than that of the reference token.
+
+The indented items are parsed using the parser in the given `IndentOpt`.
+
+@since 0.4.0.0
+
+
+-}
+{-# INLINABLE indentBlock #-}
+indentBlock
   :: Parsec () -- ^ Whitespace parser
-  -> Parsec (IndentOpt a b) -- ^ How to parse a reference token
-  -> Parsec a -- ^ 
-indentBlock ws p = do
+  -> Parsec (IndentOpt a b) -- ^ @ref@, how to parse a reference token.
+  -> Parsec b -- ^ 
+indentBlock ws indentOpt = do
   refLvl <- ws *> indentLevel
-  refToken <- p
+  refToken <- indentOpt
   case refToken of
     IndentNone x -> pure x
-    IndentMany indentLvl ret item -> do
-      mLvl <- option $ atomic (endOfLine *> indentGuard ws GT refLvl)
-      done <- isJust <$> option eof
-      case (mLvl, done) of
-        (Just lvl, False) -> 
-          ret =<< indentedItems ws refLvl (fromMaybe lvl indentLvl) item
-        _ -> ws *> ret []
-    IndentSome indentLvl ret parseSingleLine -> do
-      pos <- endOfLine *> indentGuard ws GT refLvl
-      let lvl = fromMaybe pos indentLvl
-      x <- if
-          | lvl <= refLvl -> incorrectIndent GT refLvl lvl
-          | lvl == refLvl -> parseSingleLine
-          | otherwise     -> incorrectIndent EQ lvl pos
-      ret . (x :|) =<< indentedItems ws refLvl lvl parseSingleLine
-
-indentedItems :: Parsec () -> IndentLevel -> IndentLevel -> Parsec a -> Parsec [a]
-indentedItems ws refLvl itemLvl item =
-  make False $ \ref -> do
-    ws
-    (many $ do
-      guardS (do
-          done <-  isJust <$> option eof 
-          pos  <- indentLevel
-          return $ (not done) && pos > refLvl
-        )
-      ifS 
-        ((itemLvl ==) <$> indentLevel) 
-        (item <* ws) 
-        (set ref True *> empty)
-      ) <* whenS (get ref) (incorrectIndent EQ refLvl itemLvl)
-      
-    -- lvl <- ws *> indentLevel
-
-    -- done <- isJust <$> option eof 
-    -- if done 
-    --   then return []
-    --   else
-
-
-unlessM :: Monad m => m Bool -> m () -> m ()
-unlessM f g = f >>= \b -> unless b g
-
-data IndentType 
-  = IndentTypeMany
-  | IndentTypeSome
-
-type MIndentLevel = Maybe Word
-
--- An indent level, and whether we should be gt or eq to it.
--- Maybe (Word, Ordering)
-data IndentConfig =
-    NewIndent
-  | OldIndent  { unIndentConfig :: Word }
-  | CurrIndent { unIndentConfig :: Word }
-  
-fromOldIndent :: MIndentLevel -> IndentConfig
-fromOldIndent Nothing = NewIndent
-fromOldIndent (Just x) = OldIndent x
-
-toIndentLevel :: IndentConfig -> MIndentLevel
-toIndentLevel NewIndent = Nothing
-toIndentLevel (OldIndent x) = Just x
-toIndentLevel (CurrIndent x) = Just x
-
-
-nonIndented :: Parsec () -> Parsec b -> Parsec b
-nonIndented ws p = do
-  ws
-  lvl <- debug "CHECKING LEVEL" col
-  debug (concat ["LVL is ", show lvl, "!"]) (unless (lvl == 1) $ fail (NE.fromList ["bruh"]))
-  p
-  -- indentGuard ws EQ 1 *> p
-
-myIndentMany
-  :: Parsec () -- whitespace consumer, must consume newlines
-  -> Parsec b  -- the indented items to parse
-  -> Parsec [b]
-myIndentMany ws p = make NewIndent $ \ref -> do
-  ws
-  many (indentedItem ref)
-  where
-    indentedItem ref = do
-      checkIndentLvl ref
-      p <* ws
-
-    wsNL = (ws *> endOfLine *> ws)
-
-    checkIndentLvl ref = do
-      newIndentLvl <- indentLevel
-      !mExpectedIndentLvl <- get ref
-      case mExpectedIndentLvl of
-        NewIndent 
-          -> set ref (CurrIndent newIndentLvl)
-        OldIndent  expectedIndentLvl 
-          | expectedIndentLvl < newIndentLvl -> set ref (CurrIndent newIndentLvl)
-        CurrIndent expectedIndentLvl 
-          | expectedIndentLvl == newIndentLvl -> pure ()
-        _ -> incorrectIndent2 mExpectedIndentLvl newIndentLvl
-
-    incorrectIndent2 mExpected newIndentLvl = fail ("woops" :| [])
-
-myIndentSome
-  :: Parsec ()  -- ^ does not consume newlines
-  -> MIndentLevel -- ^ old indent level
-  -> (MIndentLevel -> Parsec a)   
-  -- ^ how to parse a token at each indentation (i guess technically this may be more than one line)
-  -- parameterised by the new indentation
-  -> Parsec (NonEmpty a) -- ^
-myIndentSome ws oldIndent line = make (fromOldIndent oldIndent) $ \ref -> do
-  -- should we consume an initial newline?
-  ws -- consume any initial whitespace
-  -- consume newline and whitespace after a successful line
-  -- if we consumed whitespace within indentedLine, then failing the indentation check
-  -- would cause this `many` combinator to fail as we would have consumed input (the whitespace).
-  some (indentedLine ref <* newline <* ws)
+    IndentMany indentLvl p -> Internal.indentMany (setLvl refLvl indentLvl) ws p
+    IndentSome indentLvl p -> Internal.indentSome (setLvl refLvl indentLvl) ws p
 
   where
-    indentedLine ref = checkIndentLvl ref *> (line . toIndentLevel =<<  get ref)
+    setLvl :: a -> Maybe a -> Maybe a
+    setLvl refLvl = Just . fromMaybe refLvl
 
-    -- Compare the indent of the new item with the expected indentation
-    -- If the latter is Nothing, then update it.
-    checkIndentLvl ref = do
-      newIndentLvl <- indentLevel
-      !mExpectedIndentLvl <- get ref
 
-      case mExpectedIndentLvl of
-        NewIndent 
-          -> set ref (CurrIndent newIndentLvl)
 
-        OldIndent  expectedIndentLvl 
-          | expectedIndentLvl < newIndentLvl -> set ref (CurrIndent newIndentLvl)
 
-        CurrIndent expectedIndentLvl 
-          | expectedIndentLvl == newIndentLvl -> pure ()
+{-| This behaves like the megaparsec version; this documentation is adapted from the original 
+[megaparsec](https://hackage.haskell.org/package/megaparsec-9.7.0/docs/src/Text.Megaparsec.Char.Lexer.html#lineFold).
 
-        _ -> incorrectIndent2 mExpectedIndentLvl newIndentLvl
+Creates a parser that supports line-folding. 
 
-    incorrectIndent2 mExpected newIndentLvl = fail ("woops" :| [])
+@'lineFoldMegaparsec' ws p@ takes a whitespace parser @ws@, and a parser @p@ parameterised by a whitespace parser 
+(i.e. it is a function expecting a whitespace parser, returning a parser).
+
+The whitespace parser @ws@ consumes whitespace between each component of the line fold, 
+so it /must/ consume newlines.
+The parser @p@ receives a customised whitespace parser that checks indentation automatically,
+which @p@ may then use to consume the line fold.
+
+@since 0.4.0.0
+
+-}
+lineFoldMegaparsec
+  :: Parsec () -- ^ @ws@, the whitespace parser. Must consume newlines.
+  -> (Parsec () -> Parsec a) -- ^ @p@, a parser parameterised by a whitespace consumer.
+  -> Parsec a
+lineFoldMegaparsec ws p = do
+  refLvl <- ws *> indentLevel
+  let ws' = void (indentGuard ws GT refLvl)
+  p ws'
+
 
