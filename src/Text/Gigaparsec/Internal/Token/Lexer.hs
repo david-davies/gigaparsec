@@ -1,6 +1,9 @@
 {-# LANGUAGE Trustworthy #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# OPTIONS_GHC -Wno-partial-fields #-}
 {-# OPTIONS_HADDOCK hide #-}
+{-# OPTIONS_GHC -Wno-unused-top-binds #-}
+{-# LANGUAGE ViewPatterns #-}
 module Text.Gigaparsec.Internal.Token.Lexer (
     Lexer, mkLexer, mkLexerWithErrorConfig,
     Lexeme, lexeme, nonlexeme, fully, space,
@@ -11,7 +14,7 @@ module Text.Gigaparsec.Internal.Token.Lexer (
     stringLiteral, rawStringLiteral, multiStringLiteral, rawMultiStringLiteral,
     charLiteral,
     -- Space
-    Space, skipComments, whiteSpace, alter, initSpace,
+    Space, skipComments, whiteSpace, alter, _alterWs, initSpace,
   ) where
 
 import Text.Gigaparsec (Parsec, eof, void, empty, (<|>), atomic, unit)
@@ -268,6 +271,7 @@ data Space = Space {
   but not a useful solution for how to make the input syntactically valid.
   -}
   , skipComments :: !(Parsec ())
+
   {-|
   This combinator changes how lexemes parse whitespace for the duration of a given parser.
 
@@ -277,10 +281,10 @@ data Space = Space {
   === __Examples__
   * In indentation sensitive languages, the indentation sensitivity is often ignored within parentheses or braces. 
   In these cases, 
-  @parens (alter withNewLine p)@ 
+  @parens (_alterWs withNewLine p)@ 
   would allow unrestricted newlines within parentheses.
   -}
-  , alter :: forall a. Desc.CharPredicate -> Parsec a -> Parsec a
+  , _alterWs :: forall a. Parsec () -> Parsec a -> Parsec a
   {-|
   This parser initialises the whitespace used by the lexer when 'Text.Gigaparsec.Token.Descriptions.whiteSpaceIsContextDependent' is true.
 
@@ -291,28 +295,47 @@ data Space = Space {
   See 'alter' for how to change whitespace during a parse.
   -}
   , initSpace :: Parsec ()
+  , _implOf   :: Desc.CharPredicate -> Parsec ()
   }
+
+{-|
+This combinator changes how lexemes parse whitespace for the duration of a given parser.
+
+So long as 'Text.Gigaparsec.Token.Descriptions.whiteSpaceIsContextDependent' is true, 
+this combinator will be able to locally change the definition of whitespace during the given parser.
+
+=== __Examples__
+In indentation sensitive languages, the indentation sensitivity is often ignored within parentheses or braces. 
+In these cases, 
+@parens (alter withNewLine p)@ 
+would allow unrestricted newlines within parentheses.
+-}
+alter :: Space -> Desc.CharPredicate -> Parsec a -> Parsec a
+alter Space {..} = _alterWs . _implOf 
 
 mkSpace :: Desc.SpaceDesc -> ErrorConfig -> Space
 mkSpace desc@Desc.SpaceDesc{..} !errConfig = Space {..}
   where -- don't think we can trust doing initialisation here, it'll happen in some random order
         {-# NOINLINE wsImpl #-}
         !wsImpl = fromIORef (unsafePerformIO (newIORef (error "uninitialised space")))
+
         comment = commentParser desc -- do not make this strict
-        implOf
+        _implOf
           | supportsComments desc = hide . maybe skipComments (skipMany . (<|> comment errConfig) . void . satisfy)
           | otherwise             = hide . maybe empty (skipMany . satisfy)
-        !configuredWhitespace = implOf space
+        !configuredWhitespace = _implOf space
         !whiteSpace
           | whitespaceIsContextDependent = join (get wsImpl)
           | otherwise                    = configuredWhitespace
         !skipComments = skipMany (comment errConfig)
-        alter p
-          | whitespaceIsContextDependent = rollback wsImpl . setDuring wsImpl (implOf p)
-          | otherwise                    = throw (UnsupportedOperation badAlter)
+
         initSpace
           | whitespaceIsContextDependent = set wsImpl configuredWhitespace
           | otherwise                    = throw (UnsupportedOperation badInit)
+        _alterWs :: forall a. Parsec () -> Parsec a -> Parsec a
+        _alterWs p
+          | whitespaceIsContextDependent = rollback wsImpl . setDuring wsImpl p
+          | otherwise                    = throw (UnsupportedOperation badAlter)
         badInit = "whitespace cannot be initialised unless `spaceDesc.whitespaceIsContextDependent` is True"
         badAlter = "whitespace cannot be altered unless `spaceDesc.whitespaceIsContextDependent` is True"
 
