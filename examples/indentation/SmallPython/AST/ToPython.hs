@@ -9,10 +9,9 @@ module SmallPython.AST.ToPython (
     ToPython(..)
   ) where
 import SmallPython.AST
-import GHC.Exts (IsString (..), IsList)
+import GHC.Exts ( IsString(..), IsList, IsList(..) )
 import Data.List (intercalate, intersperse)
 import qualified Data.List.NonEmpty as NE
-import GHC.IsList (IsList(..))
 
 newtype StringBuilder = StringBuilder { unStringBuilder :: (String -> String) }
   deriving newtype (Semigroup, Monoid)
@@ -42,17 +41,17 @@ class ToPython a where
 
 instance ToPython AtomNumber where
   toPythonStringBuilder :: AtomNumber -> StringBuilder
-  toPythonStringBuilder = sb . \case 
+  toPythonStringBuilder = sb . \case
     AtomInt x -> show x
     AtomDouble x -> show x
 
 instance ToPython Atom where
   toPythonStringBuilder :: Atom -> StringBuilder
   toPythonStringBuilder = \case
-    AtomVar x -> sb x 
-    AtomNumber x -> _to x 
-    AtomString x -> sb x 
-    AtomChar x -> sb [x] 
+    AtomVar x -> sb x
+    AtomNumber x -> _to x
+    AtomString x -> sb x
+    AtomChar x -> sb [x]
 
 instance ToPython BinOpSymbol where
   toPythonStringBuilder :: BinOpSymbol -> StringBuilder
@@ -80,7 +79,7 @@ instance ToPython UnaryOp where
 
 instance ToPython Expr where
   toPythonStringBuilder :: Expr -> StringBuilder
-  toPythonStringBuilder t = case t of 
+  toPythonStringBuilder t = case t of
     (ExprAtom _ a) -> _to a
     (ExprBin _ op t u) -> mconcat ["(", _to t, ") ", _to op ," (", _to u, ")"]
     (ExprUnary _ op t@(ExprBin {})) -> mconcat [_to op ," (", _to t, ")"]
@@ -90,8 +89,8 @@ instance ToPython Expr where
 
 instance ToPython Params where
   toPythonStringBuilder :: Params -> StringBuilder
-  toPythonStringBuilder = mconcat . intersperse ", " . map (\(x, y) -> maybe (sb x) ((sb x <>) . ("=" <>) . _to) y) 
-  
+  toPythonStringBuilder = mconcat . intersperse ", " . map (\(x, y) -> maybe (sb x) ((sb x <>) . ("=" <>) . _to) y)
+
 instance ToPython ExprLHS where
   toPythonStringBuilder :: ExprLHS -> StringBuilder
   toPythonStringBuilder = \case
@@ -107,7 +106,7 @@ _toStmt :: Stat -> [StringBuilder]
 _toStmt = map ("\n" <>) . go
   where
     go = \case
-      StatFunctionDef _ f ps sts -> 
+      StatFunctionDef _ f ps sts ->
         mconcat ["def ", sb f, "(", _to ps, "):"] :
         concat (NE.toList (fmap ((map (indString <>) . go)) sts))
 
@@ -210,7 +209,7 @@ instance ToPython Program where
 -- instance ToPython Params where
 --   toPythonStringBuilderWithIndent :: Word -> Params -> StringBuilder
 --   toPythonStringBuilderWithIndent = mconcat . map (\(x, y) -> maybe (sb x) ((sb x <>) . ("=" <>) . _to) y) 
-  
+
 -- instance ToPython ExprLHS where
 --   toPythonStringBuilderWithIndent :: Word -> ExprLHS -> StringBuilder
 --   toPythonStringBuilderWithIndent = \case

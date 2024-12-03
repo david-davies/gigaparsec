@@ -3,6 +3,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE GADTs #-}
 
 {-|
 This module defines the lexer for (small)python, and exposes the core combinators for processing tokens.
